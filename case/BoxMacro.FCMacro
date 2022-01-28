@@ -1,0 +1,3199 @@
+import Mesh
+import Part
+from FreeCAD import Base
+import sys
+
+import math
+import random
+
+class Orientation:
+    LANDSCAPE = 1
+    PORTRAIT =2
+    DONTCHANGE = 3
+
+class VerticalAlignment:
+    TOP=1
+    CENTRE=2
+    BOTTOM=3
+
+class HorizontalAlignment:
+    LEFT=1
+    CENTRE=2
+    RIGHT=3
+
+class PillarType:
+    NUT_AND_BOLT=1
+    BOLT_ONLY=2
+    DEFAULT = 2 # bolt only default
+
+class BaseScrewType:
+    SIDE_SCREWS = 1
+    NO_SCREWS = 2
+    DEFAULT = 1
+
+class CaseShapeType:
+    ROUND = 1
+    SQUARE = 2
+    MUSICBOX = 3
+    DEFAULT = 2
+
+class Device(object):
+
+    def __init__(self, partType, partName, width, height,  
+                 xMargin=0.5, yMargin=0.5,
+                 verticalAlignment=VerticalAlignment.CENTRE, horizontalAlignment=HorizontalAlignment.CENTRE,
+                 componentHeight=8.0,componentDepth=4.0,
+                 innerGridXOffset=0, innerGridYOffset=0,
+                 scrunchX=0,scrunchY=0,
+                 grid = []):
+        print("Creating a new:", partName, width, height,xMargin,yMargin)
+        self.partType = partType
+        self.partName = partName
+        self.width = width + xMargin*2
+        self.height = height + yMargin*2
+        self.xMargin = xMargin
+        self.yMargin = yMargin
+        self.scrunchX = scrunchX
+        self.scrunchY = scrunchY
+        self.horizontalAlignment = horizontalAlignment
+        self.verticalAlignment = verticalAlignment
+        self.componentHeight=componentHeight
+        self.componentDepth = componentDepth
+        # Can offset the grid into a larger area - this gives the amount of offset
+        # It is set to 0 by default
+        self.innerGridXOffset = innerGridXOffset
+        self.innerGridYOffset = innerGridYOffset
+        self.grid=grid
+        self.gridWidth=0
+        self.componentDepth=0
+        self.componentHeight=0
+        self.no_of_rows = 0
+        self.gridWidth=0
+        self.gridHeight=0
+        for row in grid:
+            self.no_of_rows = self.no_of_rows+1
+            rowWidth=0
+            rowHeight=0
+            for part in row:
+                rowWidth = rowWidth + part.width
+                if part.height > rowHeight:
+                    rowHeight = part.height
+                if part.componentDepth > self.componentDepth:
+                    self.componentDepth = part.componentDepth
+                if part.componentHeight > self.componentHeight:
+                    self.componentHeight = part.componentHeight
+            # Make the grid as wide as the widest row
+            if rowWidth>self.gridWidth:
+                self.gridWidth=rowWidth
+            self.gridHeight = self.gridHeight + rowHeight
+        
+        self.gridHeight = self.gridHeight + (2*self.innerGridYOffset)
+        self.gridWidth = self.gridWidth + (2*self.innerGridXOffset)
+
+        if self.gridHeight > 0 or self.gridWidth>0:
+            if self.gridWidth > self.width:
+                self.width = self.gridWidth
+            if self.gridHeight > self.height:
+                self.height = self.gridHeight
+
+    def placeComponent(self,x,y,base,baseDepth):
+        print("Placing:",self.partName, " x:",x," y:",y," width:",self.width, " height:", self.height)
+        self.xPos = x
+        self.yPos = y
+
+        # put the offsets at the bottom of the component
+        xOffset = x + self.innerGridXOffset
+        yOffset = y + self.innerGridYOffset
+
+        # centre the grid inside the component
+        if self.gridHeight < self.height:
+            yOffset = yOffset + (self.height-self.gridHeight)/2.0
+
+        if self.gridWidth < self.width:
+            xOffset = xOffset + (self.width-self.gridWidth)/2.0
+
+        rowCount=0
+        placeY = yOffset
+        for row in self.grid:
+            rowCount = rowCount + 1
+            rowHeight=0.0
+            thisRowWidth=0.0
+            thisRowHeight=0.0
+            partCount=0
+            for part in row:
+                thisRowWidth = thisRowWidth+part.width
+                partCount = partCount + 1
+                if part.height > thisRowHeight:
+                    thisRowHeight = part.height
+            spareWidth = self.width - thisRowWidth
+            Xspacing = spareWidth / (partCount)
+            placeX = xOffset
+            for part in row:
+                # do Y position
+                if part.verticalAlignment == VerticalAlignment.BOTTOM:
+                    ypos=placeY
+                if part.verticalAlignment == VerticalAlignment.CENTRE:
+                    ypos = placeY + ((thisRowHeight - part.height) / 2)
+                if part.verticalAlignment == VerticalAlignment.TOP:
+                    if rowCount == self.no_of_rows:
+                        # doing the very top row - align to top of box
+                        ypos = self.height - part.height
+                    else:
+                        ypos = placeY + (thisRowHeight - part.height)
+                # now do X
+                # Note that there is no left or right justification as the parts
+                # in a row are always laid adjacent to each other in exactly the right
+                # space
+                xpos = placeX
+                base = part.placeComponent(xpos,ypos,base,baseDepth)
+                placeX = placeX + part.width + Xspacing
+                print("placeX",placeX,"width",part.width)
+            placeY = placeY + part.height
+        return base
+
+class PillarSupportedDevice(Device):
+
+    def __init__(self, partType, partName, width, height, 
+                 xMargin=0.5, yMargin=0.5,
+                 verticalAlignment=VerticalAlignment.CENTRE, horizontalAlignment=HorizontalAlignment.CENTRE,
+                 pillarType=PillarType.NUT_AND_BOLT, pillarRadius=1.5,pillarHeight=3,holeRadius=1,
+                 postWidth=5.0,postHeight=5.0,postDepth=2.5,
+                 holeCounterSinkDepth=1.0,holeCounterSinkRadius=3.0,
+                 innerGridXOffset=5, innerGridYOffset=5,
+                 scrunchX=0,scrunchY=0,
+                 grid=[]):
+        super(PillarSupportedDevice,self).__init__(partType, partName, width, height,
+                                                   xMargin=xMargin,yMargin=yMargin,
+                                                   verticalAlignment=verticalAlignment, horizontalAlignment=horizontalAlignment,
+                                                   innerGridXOffset=innerGridXOffset,innerGridYOffset=innerGridYOffset,
+                                                   scrunchX=scrunchX,scrunchY=scrunchY,
+                                                   grid=grid)
+        self.pillarType = pillarType
+        self.pillarRadius = pillarRadius
+        self.pillarHeight = pillarHeight
+        self.holeRadius = holeRadius
+        self.holeCounterSinkDepth = holeCounterSinkDepth
+        self.holeCounterSinkRadius = holeCounterSinkRadius
+
+    def addPillar(self,tray,x,y,baseDepth):
+        holeX = x
+        holeY = y
+        pillarShape = Part.makeCylinder(self.pillarRadius, self.pillarHeight+baseDepth, Base.Vector(holeX,holeY,-baseDepth))
+        tray = tray.fuse(pillarShape)
+        if self.pillarType == PillarType.NUT_AND_BOLT:
+            holeShape = Part.makeCylinder(self.holeRadius, self.pillarHeight + baseDepth, Base.Vector(holeX,holeY,-baseDepth))
+            tray = tray.cut(holeShape)
+            insetShape = Part.makeCylinder(self.holeCounterSinkRadius, self.holeCounterSinkDepth, Base.Vector(holeX,holeY,-baseDepth))
+            tray = tray.cut(insetShape)
+        if self.pillarType == PillarType.BOLT_ONLY:
+            holeShape = Part.makeCylinder(self.holeRadius, self.pillarHeight, Base.Vector(holeX,holeY,0))
+            tray = tray.cut(holeShape)
+        return tray
+
+
+    def addPost(self,tray,x,y,baseDepth):
+        px = x-self.postWidth/2.0
+        py = y-self.postDepth/2.0
+        postShape = Part.makeBox(self.postWidth, self.postHeight, self.postDepth, Base.Vector(px,py,0))
+        tray = tray.fuse(postShape)
+        return tray
+
+class Trinket(PillarSupportedDevice):
+
+    def __init__(self, partName, 
+                orientation=Orientation.LANDSCAPE,
+                xMargin=0.5, yMargin=0.5, 
+                pillarType=PillarType.DEFAULT,
+                scrunchX=0,scrunchY=0,
+                verticalAlignment=VerticalAlignment.CENTRE, horizontalAlignment=HorizontalAlignment.CENTRE):
+
+        super(Trinket,self).__init__("Trinket",partName, 29.72,15.24,
+                                            verticalAlignment=verticalAlignment, horizontalAlignment=horizontalAlignment,
+                                            xMargin=xMargin,yMargin=yMargin,
+                                            pillarType=pillarType,
+                                            pillarRadius=2.5,pillarHeight=3,holeRadius=1,scrunchX=scrunchX,scrunchY=scrunchY,
+                                            holeCounterSinkDepth=1.0,holeCounterSinkRadius=3.0 )
+
+    boardWidth = 29.72
+    boardHeight = 15.24
+    holeXSpacing = 21.59
+    holeYSpacing = 11.43
+
+    def placeComponent(self,x,y,tray,baseDepth):
+        super(Trinket,self).placeComponent(x,y,tray,baseDepth)
+        bottomX=x+self.xMargin
+        bottomY=y+self.yMargin
+        bottomLeftHoleX = bottomX + ((self.boardWidth-self.holeXSpacing)/2)
+        bottomLeftHoleY = bottomY + ((self.boardHeight-self.holeYSpacing)/2)
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        bottomLeftHoleY = bottomLeftHoleY+self.holeYSpacing
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        bottomLeftHoleX = bottomLeftHoleX+self.holeXSpacing
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        bottomLeftHoleY = bottomLeftHoleY-self.holeYSpacing
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        return tray
+
+
+class DOITESP32(PillarSupportedDevice):
+
+    boardHeight = 28.0
+    boardWidth = 56.0
+    holeXSpacing = 50.0
+    holeYSpacing = 23.0
+
+    def __init__(self, partName, 
+                orientation=Orientation.PORTRAIT,
+                xMargin=0, yMargin=0, 
+                pillarType=PillarType.DEFAULT,
+                scrunchX=0,scrunchY=0,
+                verticalAlignment=VerticalAlignment.CENTRE, horizontalAlignment=HorizontalAlignment.CENTRE):
+
+        super(DOITESP32,self).__init__("DOITESP32",partName, self.boardWidth,self.boardHeight,
+                                            verticalAlignment=verticalAlignment, horizontalAlignment=horizontalAlignment,
+                                            xMargin=xMargin,yMargin=yMargin,
+                                            pillarType=pillarType,
+                                            pillarRadius=2.5,pillarHeight=4,holeRadius=1,
+                                            postWidth=7.0,postHeight=7.0,postDepth=2.5,scrunchX=scrunchX,scrunchY=scrunchY,
+                                            holeCounterSinkDepth=1.0,holeCounterSinkRadius=3.0 )
+
+    def placeComponent(self,x,y,tray,baseDepth):
+        super(DOITESP32,self).placeComponent(x,y,tray,baseDepth)
+        bottomLeftHoleX = bottomX + ((self.boardWidth-self.holeXSpacing)/2)
+        bottomLeftHoleY = bottomY + ((self.boardHeight-self.holeYSpacing)/2)
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        bottomLeftHoleY = bottomLeftHoleY+self.holeYSpacing
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        bottomLeftHoleX = bottomLeftHoleX+self.holeXSpacing
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        bottomLeftHoleY = bottomLeftHoleY-self.holeYSpacing
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        return tray
+
+class WEMOS(PillarSupportedDevice):
+
+    boardHeight = 50.0
+    boardWidth = 38.0
+    holeXSpacing = 31.0
+    holeYSpacing = 30.0
+    pillarInset=32.0
+    mountingHoleInset=38.2
+    mountingHoleSpacing=15.0
+    postWidth=5.0
+    postHeight=5.0
+    postDepth=2.5
+    
+    def __init__(self, partName, 
+                orientation=Orientation.PORTRAIT,
+                xMargin=0, yMargin=0, 
+                pillarType=PillarType.DEFAULT, scrunchX=0,scrunchY=0,
+                verticalAlignment=VerticalAlignment.CENTRE, horizontalAlignment=HorizontalAlignment.CENTRE):
+
+        super(WEMOS,self).__init__("WEMOS",partName, self.boardWidth,self.boardHeight,
+                                            verticalAlignment=verticalAlignment, horizontalAlignment=horizontalAlignment,
+                                            xMargin=xMargin,yMargin=yMargin,
+                                            pillarType=pillarType,
+                                            pillarRadius=3.5,pillarHeight=4,holeRadius=1.4,
+                                            postWidth=6.0,postHeight=6.0,postDepth=2.5,scrunchX=scrunchX,scrunchY=scrunchY,
+                                            holeCounterSinkDepth=1.0,holeCounterSinkRadius=3.0 )
+
+    def placeComponent(self,x,y,tray,baseDepth):
+        super(WEMOS,self).placeComponent(x,y,tray,baseDepth)
+        postWidth=1
+        postDepth=1
+        xp = x+self.xMargin
+        yp = y+self.yMargin
+#        tray=self.addPost(tray,xp,yp,baseDepth)
+#        tray=self.addPost(tray,xp+self.boardWidth,yp,baseDepth)
+#        tray=self.addPost(tray,xp,yp+self.boardHeight,baseDepth)
+#        tray=self.addPost(tray,xp+self.boardWidth,yp+self.boardHeight,baseDepth)
+#
+        postX = xp+(self.boardWidth-self.mountingHoleSpacing)/2.0
+        postY = yp+self.pillarInset
+        tray=self.addPost(tray,postX,postY,baseDepth)
+        postX = postX+self.mountingHoleSpacing
+        tray=self.addPost(tray,postX,postY,baseDepth)
+#
+        pillarX = xp+(self.boardWidth-self.mountingHoleSpacing)/2.0
+        pillarY = yp+self.mountingHoleInset
+        tray=self.addPillar(tray,pillarX,pillarY,baseDepth)
+        pillarX = pillarX+self.mountingHoleSpacing
+        tray=self.addPillar(tray,pillarX,pillarY,baseDepth)
+#
+        return tray
+
+        bottomX=x+self.xMargin
+        bottomY=y+self.yMargin
+        bottomLeftHoleX = bottomX + ((self.boardWidth-self.holeXSpacing)/2)
+        bottomLeftHoleY = bottomY + ((self.boardHeight-self.holeYSpacing)/2)
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        bottomLeftHoleY = bottomLeftHoleY+self.holeYSpacing
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        bottomLeftHoleX = bottomLeftHoleX+self.holeXSpacing
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        bottomLeftHoleY = bottomLeftHoleY-self.holeYSpacing
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        return tray
+
+class WEMOSLid(PillarSupportedDevice):
+
+    def __init__(self, partName, 
+                orientation=Orientation.LANDSCAPE,
+                xMargin=0., yMargin=0.5, 
+                pillarType=PillarType.DEFAULT,scrunchX=0,scrunchY=0,
+                verticalAlignment=VerticalAlignment.CENTRE, horizontalAlignment=HorizontalAlignment.CENTRE,grid=[]):
+
+        super(WEMOSLid,self).__init__("WEMOSLid",partName, WEMOS.boardWidth,WEMOS.boardHeight,
+                                            verticalAlignment=verticalAlignment, horizontalAlignment=horizontalAlignment,scrunchX=scrunchX,scrunchY=scrunchY,
+                                            xMargin=xMargin,yMargin=yMargin,grid=grid)
+
+class BME280(PillarSupportedDevice):
+
+    boardHeight = 13.0
+    boardWidth = 17.0
+    holeXSpacing = 10.0
+    holeYOffset = 8.0
+    holeDiam=3.0
+    
+    def __init__(self, partName, 
+                orientation=Orientation.PORTRAIT,
+                xMargin=0, yMargin=0, 
+                pillarType=PillarType.DEFAULT,scrunchX=0,scrunchY=0,
+                verticalAlignment=VerticalAlignment.CENTRE, horizontalAlignment=HorizontalAlignment.CENTRE):
+
+        super(BME280,self).__init__("BME280",partName, self.boardWidth,self.boardHeight,
+                                            verticalAlignment=verticalAlignment, horizontalAlignment=horizontalAlignment,
+                                            xMargin=xMargin,yMargin=yMargin,
+                                            pillarType=pillarType,
+                                            pillarRadius=2.5,pillarHeight=4,holeRadius=1,
+                                            postWidth=6.0,postHeight=6.0,postDepth=2.5,scrunchX=scrunchX,scrunchY=scrunchY,
+                                            holeCounterSinkDepth=1.0,holeCounterSinkRadius=3.0 )
+
+    def placeComponent(self,x,y,tray,baseDepth):
+        super(BME280,self).placeComponent(x,y,tray,baseDepth)
+        xp = x+self.xMargin
+        yp = y+self.yMargin
+        pillarX=xp+(self.boardWidth-self.holeXSpacing)/2
+        pillarY=yp+self.holeYOffset
+        tray=self.addPillar(tray,pillarX,pillarY,baseDepth)
+        pillarX=pillarX+self.holeXSpacing
+        tray=self.addPillar(tray,pillarX,pillarY,baseDepth)
+        holeX=xp+(self.boardWidth/2)
+        holePos = Base.Vector(holeX,pillarY,-baseDepth)
+        hole = Part.makeCylinder(self.holeDiam,baseDepth, holePos)
+        tray=tray.cut(hole)
+        return tray
+
+        bottomX=x+self.xMargin
+        bottomY=y+self.yMargin
+        bottomLeftHoleX = bottomX + ((self.boardWidth-self.holeXSpacing)/2)
+        bottomLeftHoleY = bottomY + ((self.boardHeight-self.holeYSpacing)/2)
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        bottomLeftHoleY = bottomLeftHoleY+self.holeYSpacing
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        bottomLeftHoleX = bottomLeftHoleX+self.holeXSpacing
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        bottomLeftHoleY = bottomLeftHoleY-self.holeYSpacing
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        return tray
+
+class BME280Lid(PillarSupportedDevice):
+
+    def __init__(self, partName, 
+                orientation=Orientation.LANDSCAPE,
+                xMargin=0., yMargin=0.5, 
+                pillarType=PillarType.DEFAULT,scrunchX=0,scrunchY=0,
+                verticalAlignment=VerticalAlignment.CENTRE, horizontalAlignment=HorizontalAlignment.CENTRE,grid=[]):
+
+        super(BME280Lid,self).__init__("BME280Lid",partName, BME280.boardWidth,BME280.boardHeight,
+                                            verticalAlignment=verticalAlignment, horizontalAlignment=horizontalAlignment,scrunchX=scrunchX,scrunchY=scrunchY,
+                                            xMargin=xMargin,yMargin=yMargin,grid=grid)
+
+    def placeComponent(self,x,y,tray,baseDepth):
+        super(BME280Lid,self).placeComponent(x,y,tray,baseDepth)
+        xp = x+self.xMargin
+        yp = y+self.yMargin
+        pillarY=yp+BME280.holeYOffset
+        holeX=xp+(BME280.boardWidth/2)
+        holePos = Base.Vector(holeX,pillarY,-baseDepth)
+        hole = Part.makeCylinder(BME280.holeDiam,baseDepth, holePos)
+        tray=tray.cut(hole)
+        return tray
+
+
+class CCS811(PillarSupportedDevice):
+
+    boardHeight = 15.5
+    boardWidth = 21.0
+    holeXSpacing = 15.0
+    holeYOffset = 12.0
+    holeDiam=3.0
+    
+    def __init__(self, partName, 
+                orientation=Orientation.PORTRAIT,
+                xMargin=0, yMargin=0, 
+                pillarType=PillarType.DEFAULT,scrunchX=0,scrunchY=0,
+                verticalAlignment=VerticalAlignment.CENTRE, horizontalAlignment=HorizontalAlignment.CENTRE):
+
+        super(CCS811,self).__init__("CCS811",partName, self.boardWidth,self.boardHeight,
+                                            verticalAlignment=verticalAlignment, horizontalAlignment=horizontalAlignment,
+                                            xMargin=xMargin,yMargin=yMargin,
+                                            pillarType=pillarType,scrunchX=scrunchX,scrunchY=scrunchY,
+                                            pillarRadius=2.5,pillarHeight=4,holeRadius=1,
+                                            postWidth=6.0,postHeight=6.0,postDepth=2.5,
+                                            holeCounterSinkDepth=1.0,holeCounterSinkRadius=3.0 )
+
+    def placeComponent(self,x,y,tray,baseDepth):
+        super(CCS811,self).placeComponent(x,y,tray,baseDepth)
+        xp = x+self.xMargin
+        yp = y+self.yMargin
+        pillarX=xp+(self.boardWidth-self.holeXSpacing)/2
+        pillarY=yp+self.holeYOffset
+        tray=self.addPillar(tray,pillarX,pillarY,baseDepth)
+        pillarX=pillarX+self.holeXSpacing
+        tray=self.addPillar(tray,pillarX,pillarY,baseDepth)
+        holeX=xp+(self.boardWidth/2)
+        holePos = Base.Vector(holeX,pillarY,-baseDepth)
+        hole = Part.makeCylinder(self.holeDiam,baseDepth, holePos)
+        tray=tray.cut(hole)
+        return tray
+
+        bottomX=x+self.xMargin
+        bottomY=y+self.yMargin
+        bottomLeftHoleX = bottomX + ((self.boardWidth-self.holeXSpacing)/2)
+        bottomLeftHoleY = bottomY + ((self.boardHeight-self.holeYSpacing)/2)
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        bottomLeftHoleY = bottomLeftHoleY+self.holeYSpacing
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        bottomLeftHoleX = bottomLeftHoleX+self.holeXSpacing
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        bottomLeftHoleY = bottomLeftHoleY-self.holeYSpacing
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        return tray
+
+class CCS811Lid(PillarSupportedDevice):
+
+    def __init__(self, partName, 
+                orientation=Orientation.LANDSCAPE,
+                xMargin=0., yMargin=0.5, 
+                pillarType=PillarType.DEFAULT,scrunchX=0,scrunchY=0,
+                verticalAlignment=VerticalAlignment.CENTRE, horizontalAlignment=HorizontalAlignment.CENTRE,grid=[]):
+
+        super(CCS811Lid,self).__init__("CCS811Lid",partName, CCS811.boardWidth,CCS811.boardHeight,scrunchX=scrunchX,scrunchY=scrunchY,
+                                            verticalAlignment=verticalAlignment, horizontalAlignment=horizontalAlignment,
+                                            xMargin=xMargin,yMargin=yMargin,grid=grid)
+
+    def placeComponent(self,x,y,tray,baseDepth):
+        super(CCS811Lid,self).placeComponent(x,y,tray,baseDepth)
+        xp = x+self.xMargin
+        yp = y+self.yMargin
+        pillarY=yp+CCS811.holeYOffset
+        holeX=xp+(CCS811.boardWidth/2)
+        holePos = Base.Vector(holeX,pillarY,-baseDepth)
+        hole = Part.makeCylinder(BME280.holeDiam,baseDepth, holePos)
+        tray=tray.cut(hole)
+        return tray
+
+class PIRSensor(PillarSupportedDevice):
+
+    boardHeight = 25.0
+    boardWidth = 35.0
+    holeXSpacing = 30.0
+    sensorHoleRadius = 11.5
+
+    def __init__(self, partName, 
+                orientation=Orientation.PORTRAIT,
+                xMargin=0.5, yMargin=0.5, 
+                pillarType=PillarType.DEFAULT,scrunchX=0,scrunchY=0,
+                verticalAlignment=VerticalAlignment.CENTRE, horizontalAlignment=HorizontalAlignment.CENTRE):
+
+        super(PIRSensor,self).__init__("PIRSensor",partName, self.boardWidth,self.boardHeight,
+                                            verticalAlignment=verticalAlignment, horizontalAlignment=horizontalAlignment,
+                                            xMargin=xMargin,yMargin=yMargin,
+                                            pillarType=pillarType,scrunchX=scrunchX,scrunchY=scrunchY,
+                                            pillarRadius=2.5,pillarHeight=4,holeRadius=0.75,
+                                            holeCounterSinkDepth=1.0,holeCounterSinkRadius=3.0 )
+
+    def placeComponent(self,x,y,tray,baseDepth):
+        tray = super(PIRSensor,self).placeComponent(x,y,tray,baseDepth)
+        bottomX=x+self.xMargin
+        bottomY=y+self.yMargin
+        bottomLeftHoleX = bottomX + ((self.boardWidth-self.holeXSpacing)/2)
+        bottomLeftHoleY = bottomY + (self.boardHeight/2)
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        bottomLeftHoleX = bottomLeftHoleX+self.holeXSpacing
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        holeX = bottomX + (self.boardWidth/2.0)
+        holeY = bottomY + (self.boardHeight/2.0)
+        holePos = Base.Vector(holeX,holeY,0)
+        hole = Part.makeCylinder(self.sensorHoleRadius,baseDepth+100,holePos,Base.Vector(0,0,-1))
+        #tray = tray.cut(hole)    
+        return tray
+
+class SmallPIRSensor(PillarSupportedDevice):
+
+    boardHeight = 19.0
+    boardWidth = 19.0
+    holeXSpacing = 15.0
+    sensorHoleRadius = 5.0
+    outerHoleRadius = 6.3
+    outerHoleDepth = 1.3
+    screwholeDepth = 2.0
+
+    def __init__(self, partName, 
+                orientation=Orientation.PORTRAIT,
+                xMargin=0.5, yMargin=0.5, 
+                pillarType=PillarType.DEFAULT,scrunchX=0,scrunchY=0,
+                verticalAlignment=VerticalAlignment.CENTRE, horizontalAlignment=HorizontalAlignment.CENTRE):
+
+        super(SmallPIRSensor,self).__init__("PIRSensor",partName, self.boardWidth,self.boardHeight,
+                                            verticalAlignment=verticalAlignment, horizontalAlignment=horizontalAlignment,
+                                            xMargin=xMargin,yMargin=yMargin,
+                                            pillarType=pillarType,scrunchX=scrunchX,scrunchY=scrunchY,
+                                            pillarRadius=2.5,pillarHeight=0.5,holeRadius=1.2,
+                                            holeCounterSinkDepth=1.0,holeCounterSinkRadius=3.0 )
+
+    def placeComponent(self,x,y,tray,baseDepth):
+        tray = super(SmallPIRSensor,self).placeComponent(x,y,tray,baseDepth)
+        bottomX=x+self.xMargin
+        bottomY=y+self.yMargin
+        bottomLeftHoleX = bottomX + ((self.boardWidth-self.holeXSpacing)/2)
+        bottomLeftHoleY = bottomY + (self.boardHeight/2)
+        pillarHole = Part.makeCylinder(self.holeRadius,self.screwholeDepth,Base.Vector(bottomLeftHoleX,bottomLeftHoleY,-self.screwholeDepth)) 
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        tray=tray.cut(pillarHole)
+        bottomLeftHoleX = bottomLeftHoleX+self.holeXSpacing
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        pillarHole = Part.makeCylinder(self.holeRadius,self.screwholeDepth,Base.Vector(bottomLeftHoleX,bottomLeftHoleY,-self.screwholeDepth)) 
+        tray=tray.cut(pillarHole)
+        holeX = bottomX + (self.boardWidth/2.0)
+        holeY = bottomY + (self.boardHeight/2.0)
+        holePos = Base.Vector(holeX,holeY,0)
+        hole = Part.makeCylinder(self.sensorHoleRadius,baseDepth+100,holePos,Base.Vector(0,0,-1))
+        tray = tray.cut(hole)    
+        holePos = Base.Vector(holeX,holeY,-self.outerHoleDepth)
+        outerHole = Part.makeCylinder(self.outerHoleRadius,baseDepth+100,holePos,Base.Vector(0,0,1))
+        tray = tray.cut(outerHole)    
+        return tray
+
+class RotaryPot(PillarSupportedDevice):
+
+    boardHeight = 19.0
+    boardWidth = 19.0
+    holeXSpacing = 15.0
+    sensorHoleRadius = 3.7
+    outerHoleRadius = 6.3
+    outerHoleDepth = 1.3
+    screwholeDepth = 2.0
+
+    def __init__(self, partName, 
+                orientation=Orientation.PORTRAIT,
+                xMargin=0.5, yMargin=0.5, 
+                pillarType=PillarType.DEFAULT,scrunchX=0,scrunchY=0,
+                verticalAlignment=VerticalAlignment.CENTRE, horizontalAlignment=HorizontalAlignment.CENTRE):
+
+        super(RotaryPot,self).__init__("RotaryPot",partName, self.boardWidth,self.boardHeight,
+                                            verticalAlignment=verticalAlignment, horizontalAlignment=horizontalAlignment,
+                                            xMargin=xMargin,yMargin=yMargin,
+                                            pillarType=pillarType,scrunchX=scrunchX,scrunchY=scrunchY,
+                                            pillarRadius=2.5,pillarHeight=0.5,holeRadius=1.2,
+                                            holeCounterSinkDepth=1.0,holeCounterSinkRadius=3.0 )
+
+    def placeComponent(self,x,y,tray,baseDepth):
+        tray = super(RotaryPot,self).placeComponent(x,y,tray,baseDepth)
+        bottomX=x+self.xMargin
+        bottomY=y+self.yMargin
+        bottomLeftHoleX = bottomX + ((self.boardWidth-self.holeXSpacing)/2)
+        bottomLeftHoleY = bottomY + (self.boardHeight/2)
+        pillarHole = Part.makeCylinder(self.holeRadius,self.screwholeDepth,Base.Vector(bottomLeftHoleX,bottomLeftHoleY,-self.screwholeDepth)) 
+        #tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        #tray=tray.cut(pillarHole)
+        bottomLeftHoleX = bottomLeftHoleX+self.holeXSpacing
+        #tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        pillarHole = Part.makeCylinder(self.holeRadius,self.screwholeDepth,Base.Vector(bottomLeftHoleX,bottomLeftHoleY,-self.screwholeDepth)) 
+        #tray=tray.cut(pillarHole)
+        holeX = bottomX + (self.boardWidth/2.0)
+        holeY = bottomY + (self.boardHeight/2.0)
+        holePos = Base.Vector(holeX,holeY,0)
+        hole = Part.makeCylinder(self.sensorHoleRadius,baseDepth+100,holePos,Base.Vector(0,0,-1))
+        tray = tray.cut(hole)    
+        holePos = Base.Vector(holeX,holeY,-self.outerHoleDepth)
+        outerHole = Part.makeCylinder(self.outerHoleRadius,baseDepth+100,holePos,Base.Vector(0,0,1))
+        #tray = tray.cut(outerHole)    
+        return tray
+
+
+
+
+class PIRSensorLid(PillarSupportedDevice):
+
+    boardHeight = 25.0
+    boardWidth = 35.0
+    holeXSpacing = 30.0
+    sensorHoleRadius = 5.1
+
+    def __init__(self, partName, 
+                orientation=Orientation.LANDSCAPE,
+                xMargin=0.5, yMargin=0.5, 
+                pillarType=PillarType.DEFAULT,scrunchX=0,scrunchY=0,
+                verticalAlignment=VerticalAlignment.CENTRE, horizontalAlignment=HorizontalAlignment.CENTRE):
+
+        super(PIRSensorLid,self).__init__("PIRSensorLid",partName, PIRSensor.boardWidth,PIRSensor.boardHeight,
+                                             verticalAlignment=verticalAlignment, horizontalAlignment=horizontalAlignment,scrunchX=scrunchX,scrunchY=scrunchY,
+                                            xMargin=xMargin,yMargin=yMargin )
+
+    def placeComponent(self,x,y,tray,baseDepth):
+        bottomX=x+self.xMargin
+        bottomY=y+self.yMargin
+        holeX = bottomX + (self.boardWidth/2.0)
+        holeY = bottomY + (self.boardHeight/2.0)
+        holePos = Base.Vector(holeX,holeY,0)
+        hole = Part.makeCylinder(self.sensorHoleRadius,baseDepth+100,holePos,Base.Vector(0,0,-1))
+        #tray = tray.cut(hole)    
+        return tray
+
+
+class PIRSensorLidHole(PillarSupportedDevice):
+
+    boardHeight = 50.0
+    boardWidth = 50.0
+    holeXSpacing = 30.0
+    sensorHoleWidth = 23.0
+    sensorHoleHeight = 23.0
+    holeXSpacing = 28.0
+    
+
+    def __init__(self, partName, 
+                orientation=Orientation.LANDSCAPE,
+                xMargin=0.5, yMargin=0.5, 
+                pillarType=PillarType.DEFAULT,scrunchX=0,scrunchY=0,
+                verticalAlignment=VerticalAlignment.CENTRE, horizontalAlignment=HorizontalAlignment.CENTRE):
+
+        super(PIRSensorLidHole,self).__init__("PIRSensorLidHole",partName, PIRSensorLidHole.boardWidth,PIRSensorLidHole.boardHeight,
+                                            verticalAlignment=verticalAlignment, horizontalAlignment=horizontalAlignment,
+                                            pillarType=pillarType,scrunchX=scrunchX,scrunchY=scrunchY,
+                                            pillarRadius=2.5,pillarHeight=2,holeRadius=1.0,
+                                            holeCounterSinkDepth=1.0,holeCounterSinkRadius=3.0,
+                                            xMargin=xMargin,yMargin=yMargin )
+
+    def placeComponent(self,x,y,tray,baseDepth):
+        bottomX=x+self.xMargin
+        bottomY=y+self.yMargin
+        bottomLeftHoleX = bottomX + ((self.boardWidth-self.holeXSpacing)/2)
+        bottomLeftHoleY = bottomY + (self.boardHeight/2)
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        bottomLeftHoleX = bottomLeftHoleX+self.holeXSpacing
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        holeX = bottomX + ((self.boardWidth-self.sensorHoleWidth)/2.0)
+        holeY = bottomY + ((self.boardHeight-self.sensorHoleHeight)/2.0)
+        holePos = Base.Vector(holeX,holeY,-baseDepth)
+        hole = Part.makeBox(self.sensorHoleWidth,self.sensorHoleHeight,baseDepth,holePos)
+        tray = tray.cut(hole)    
+        return tray
+
+class PIRSensorLidFlat(PillarSupportedDevice):
+
+    boardHeight = 50.0
+    boardWidth = 50.0
+    holeXSpacing = 30.0
+    sensorHoleWidth = 23.0
+    sensorHoleHeight = 23.0
+    holeXSpacing = 28.0
+    visorThickness=0.8
+    
+
+    def __init__(self, partName, 
+                orientation=Orientation.LANDSCAPE,
+                xMargin=0.5, yMargin=0.5, 
+                pillarType=PillarType.DEFAULT,scrunchX=0,scrunchY=0,
+                verticalAlignment=VerticalAlignment.CENTRE, horizontalAlignment=HorizontalAlignment.CENTRE):
+
+        super(PIRSensorLidFlat,self).__init__("PIRSensorLidFlat",partName, PIRSensorLidHole.boardWidth,PIRSensorLidHole.boardHeight,
+                                            verticalAlignment=verticalAlignment, horizontalAlignment=horizontalAlignment,
+                                            pillarType=pillarType,scrunchX=scrunchX,scrunchY=scrunchY,
+                                            pillarRadius=2.5,pillarHeight=3,holeRadius=1.0,
+                                            holeCounterSinkDepth=1.0,holeCounterSinkRadius=3.0,
+                                            xMargin=xMargin,yMargin=yMargin )
+
+    def placeComponent(self,x,y,tray,baseDepth):
+        bottomX=x+self.xMargin
+        bottomY=y+self.yMargin
+        bottomLeftHoleX = bottomX + ((self.boardWidth-self.holeXSpacing)/2)
+        bottomLeftHoleY = bottomY + (self.boardHeight/2)
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        bottomLeftHoleX = bottomLeftHoleX+self.holeXSpacing
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        holeX = bottomX + ((self.boardWidth-self.sensorHoleWidth)/2.0)
+        holeY = bottomY + ((self.boardHeight-self.sensorHoleHeight)/2.0)
+        holePos = Base.Vector(holeX,holeY,-baseDepth+self.visorThickness)
+        hole = Part.makeBox(self.sensorHoleWidth,self.sensorHoleHeight,baseDepth,holePos)
+        tray = tray.cut(hole)    
+        return tray
+
+
+class PixelRing(PillarSupportedDevice):
+
+    boardHeight = 53.0
+    boardWidth = 53.0
+    holeInset = 3.0
+
+    def __init__(self, partName, 
+                orientation=Orientation.PORTRAIT,
+                xMargin=0.5, yMargin=0.5, 
+                pillarType=PillarType.DEFAULT,scrunchX=0,scrunchY=0,
+                verticalAlignment=VerticalAlignment.CENTRE, horizontalAlignment=HorizontalAlignment.CENTRE,grid=[]):
+
+        super(PixelRing,self).__init__("PixelRing",partName, self.boardWidth,self.boardHeight,
+                                            verticalAlignment=verticalAlignment, horizontalAlignment=horizontalAlignment,
+                                            xMargin=xMargin,yMargin=yMargin,
+                                            pillarType=pillarType,scrunchX=scrunchX,scrunchY=scrunchY,
+                                            pillarRadius=2.5,pillarHeight=4,holeRadius=0.75,
+                                            holeCounterSinkDepth=1.0,holeCounterSinkRadius=3.0,grid=grid )
+
+    def placeComponent(self,x,y,tray,baseDepth):
+        tray = super(PixelRing,self).placeComponent(x,y,tray,baseDepth)
+        bottomX=x+self.xMargin+self.holeInset
+        bottomY=y+self.yMargin+self.holeInset
+        holeDistance = (self.boardHeight-(2*self.holeInset))/2.0
+        tray=self.addPillar(tray,bottomX,bottomY+holeDistance,baseDepth)
+        tray=self.addPillar(tray,bottomX+holeDistance,bottomY,baseDepth)
+        bottomX = bottomX + holeDistance
+        bottomY = bottomY + holeDistance
+        tray=self.addPillar(tray,bottomX,bottomY+holeDistance,baseDepth)
+        tray=self.addPillar(tray,bottomX+holeDistance,bottomY,baseDepth)
+        return tray
+
+class PixelRingLid(Device):
+
+    def __init__(self, partName, 
+                orientation=Orientation.LANDSCAPE,
+                xMargin=0.5, yMargin=0.5, 
+                pillarType=PillarType.DEFAULT,scrunchX=0,scrunchY=0,
+                verticalAlignment=VerticalAlignment.CENTRE, horizontalAlignment=HorizontalAlignment.CENTRE,grid=[]):
+
+        super(PixelRingLid,self).__init__("PixelRingLid",partName, PixelRing.boardWidth,PixelRing.boardHeight,scrunchX=scrunchX,scrunchY=scrunchY,
+                                            verticalAlignment=verticalAlignment, horizontalAlignment=horizontalAlignment,
+                                            xMargin=xMargin,yMargin=yMargin,grid=grid )
+
+class PixelRingLightPipeLid(PillarSupportedDevice):
+
+    def __init__(self, partName, 
+                orientation=Orientation.LANDSCAPE,
+                xMargin=2.0, yMargin=2.0, 
+                pillarType=PillarType.DEFAULT,scrunchX=0,scrunchY=0,
+                verticalAlignment=VerticalAlignment.CENTRE, horizontalAlignment=HorizontalAlignment.CENTRE,grid=[]):
+
+        super(PixelRingLightPipeLid,self).__init__("PixelRingLightPipeLid",partName, PixelRing.boardWidth,PixelRing.boardHeight,
+                                            verticalAlignment=verticalAlignment, horizontalAlignment=horizontalAlignment,
+                                            xMargin=xMargin,yMargin=yMargin,grid=grid,pillarRadius=3.0,pillarHeight=6.8,holeRadius=1.0,
+                                            pillarType=PillarType.DEFAULT,scrunchX=scrunchX,scrunchY=scrunchY,
+                                            holeCounterSinkDepth=1.0,holeCounterSinkRadius=3.0 )
+
+    def placeComponent(self,x,y,tray,baseDepth):
+        print("***** placing lightpipe lid at",x,y,"margin",self.xMargin,self.yMargin)
+
+        ledsIn12=[0,1,2,3,4,5,6,7,8,9,10,11]
+        ledPipeOuterDiam=10.0
+        ledPipeThickness=1.0
+        ledHeight=6
+        diffuserHeight=0.5
+
+        tray = super(PixelRingLightPipeLid,self).placeComponent(x,y,tray,baseDepth)
+
+        # First make some pillars
+        bottomX=x+self.xMargin+PixelRing.holeInset
+        bottomY=y+self.yMargin+PixelRing.holeInset
+        holeDistance = (PixelRing.boardHeight-(2*PixelRing.holeInset))/2.0
+        tray=self.addPillar(tray,bottomX,bottomY+holeDistance,baseDepth)
+        tray=self.addPillar(tray,bottomX+holeDistance,bottomY,baseDepth)
+        bottomX = bottomX + holeDistance
+        bottomY = bottomY + holeDistance
+        tray=self.addPillar(tray,bottomX,bottomY+holeDistance,baseDepth)
+        tray=self.addPillar(tray,bottomX+holeDistance,bottomY,baseDepth)
+
+        # now make some light pipes
+
+        bottomX=x+self.xMargin
+        bottomY=y+self.yMargin
+
+        centreX = bottomX + (PixelRing.boardWidth/2.0)
+        centreY = bottomY + (PixelRing.boardHeight/2.0)
+        centrePos = Base.Vector(centreX,centreY,0)
+
+        startPos = Base.Vector(bottomX+(ledPipeOuterDiam/2.0), centreY,-baseDepth+diffuserHeight)
+
+        ledPipeOuterCut=Part.makeCylinder((ledPipeOuterDiam) / 2.0,ledHeight+baseDepth,Base.Vector(0,0,0))
+
+        ledPipe=ledPipeOuterCut.copy()
+
+        ledPipeCut = Part.makeCylinder((ledPipeOuterDiam-ledPipeThickness) / 2.0,ledHeight+baseDepth,Base.Vector(0,0,0))
+
+        ledPipe = ledPipe.cut(ledPipeCut)
+
+        ledPipe.translate(startPos)
+        ledPipeOuterCut.translate(startPos)
+
+        for pipePos in ledsIn12:
+            rotation=((pipePos/12.0))* 360+15
+            ledPipe.rotate(centrePos,Base.Vector(0,0,1),rotation)
+            ledPipeOuterCut.rotate(centrePos,Base.Vector(0,0,1),rotation)
+            tray = tray.cut(ledPipeOuterCut)
+            tray = tray.fuse(ledPipe)
+            ledPipe.rotate(centrePos,Base.Vector(0,0,1),-rotation)
+            ledPipeOuterCut.rotate(centrePos,Base.Vector(0,0,1),-rotation)
+        return tray
+
+
+class ButtonRingLid(PillarSupportedDevice):
+
+    boardHeight = 86.0
+    boardWidth = 86.0
+    holeInset = 1.0
+    switchHoleDiam=13.0
+
+    def __init__(self, partName, 
+                orientation=Orientation.LANDSCAPE,
+                xMargin=2.0, yMargin=2.0, 
+                pillarType=PillarType.DEFAULT,
+                verticalAlignment=VerticalAlignment.CENTRE, horizontalAlignment=HorizontalAlignment.CENTRE,
+                scrunchX=0,scrunchY=0,
+                grid=[]):
+
+        super(ButtonRingLid,self).__init__("ButtonRingLid",partName, ButtonRingLid.boardWidth,ButtonRingLid.boardHeight,
+                                            verticalAlignment=verticalAlignment, horizontalAlignment=horizontalAlignment,
+                                            xMargin=xMargin,yMargin=yMargin,grid=grid,scrunchX=scrunchX,scrunchY=scrunchY,
+                                            pillarRadius=3.0,pillarHeight=6.8,holeRadius=1.0,
+                                            pillarType=PillarType.DEFAULT,
+                                            holeCounterSinkDepth=1.0,holeCounterSinkRadius=3.0 )
+
+    def placeComponent(self,x,y,tray,baseDepth):
+
+        ledsIn12=[0,1,2,3,4,5,6,7,8,9,10,11]
+
+        tray = super(ButtonRingLid,self).placeComponent(x,y,tray,baseDepth)
+
+        # now make some holes
+
+        bottomX=x+self.xMargin
+        bottomY=y+self.yMargin
+
+        centreX = bottomX + (ButtonRingLid.boardWidth/2.0)
+        centreY = bottomY + (ButtonRingLid.boardHeight/2.0)
+        centrePos = Base.Vector(centreX,centreY,0)
+
+        startPos = Base.Vector(bottomX+(ButtonRingLid.switchHoleDiam/2.0)+self.holeInset, centreY,-baseDepth)
+
+        holeCut=Part.makeCylinder((ButtonRingLid.switchHoleDiam) / 2.0,baseDepth,Base.Vector(0,0,0))
+
+        holeCut.translate(startPos)
+
+        for pipePos in ledsIn12:
+            rotation=((pipePos/12.0))* 360+15
+            holeCut.rotate(centrePos,Base.Vector(0,0,1),rotation)
+            tray = tray.cut(holeCut)
+            holeCut.rotate(centrePos,Base.Vector(0,0,1),-rotation)
+        return tray
+
+
+
+class DOITESP32Lid(Device):
+
+    def __init__(self, partName, 
+                orientation=Orientation.LANDSCAPE,
+                xMargin=0.5, yMargin=0.5, 
+                pillarType=PillarType.DEFAULT,scrunchX=0,scrunchY=0,
+                verticalAlignment=VerticalAlignment.CENTRE, horizontalAlignment=HorizontalAlignment.CENTRE):
+
+        super(DOITESP32Lid,self).__init__("DOITESP32Lid",partName, DOITESP32.boardWidth,DOITESP32.boardHeight,
+                                            verticalAlignment=verticalAlignment, horizontalAlignment=horizontalAlignment,scrunchX=scrunchX,scrunchY=scrunchY,
+                                            xMargin=xMargin,yMargin=yMargin )
+
+
+class PIZERO(PillarSupportedDevice):
+
+    boardHeight = 32.0
+    boardWidth = 67.0
+    holeXSpacing = 58.0
+    holeYSpacing = 23.0
+
+
+    def __init__(self, partName, 
+                orientation=Orientation.PORTRAIT,
+                xMargin=0.5, yMargin=0.5, 
+                pillarType=PillarType.DEFAULT,scrunchX=0,scrunchY=0,
+                verticalAlignment=VerticalAlignment.CENTRE, horizontalAlignment=HorizontalAlignment.CENTRE):
+
+        super(PIZERO,self).__init__("PIZERO",partName, self.boardWidth,self.boardHeight,
+                                            verticalAlignment=verticalAlignment, horizontalAlignment=horizontalAlignment,
+                                            xMargin=xMargin,yMargin=yMargin,
+                                            pillarType=pillarType,scrunchX=scrunchX,scrunchY=scrunchY,
+                                            pillarRadius=2.5,pillarHeight=4,holeRadius=1,
+                                            holeCounterSinkDepth=1.0,holeCounterSinkRadius=3.0 )
+
+    def placeComponent(self,x,y,tray,baseDepth):
+        tray = super(PIZERO,self).placeComponent(x,y,tray,baseDepth)
+        bottomX=x+self.xMargin
+        bottomY=y+self.yMargin
+        bottomLeftHoleX = bottomX + ((self.boardWidth-self.holeXSpacing)/2)
+        bottomLeftHoleY = bottomY + ((self.boardHeight-self.holeYSpacing)/2)
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        bottomLeftHoleY = bottomLeftHoleY+self.holeYSpacing
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        bottomLeftHoleX = bottomLeftHoleX+self.holeXSpacing
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        bottomLeftHoleY = bottomLeftHoleY-self.holeYSpacing
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        return tray
+
+class PIZEROLandScape(PillarSupportedDevice):
+
+    boardHeight = 67.0
+    boardWidth = 32.0
+    holeXSpacing = 23.0 
+    holeYSpacing = 58.0
+
+
+    def __init__(self, partName, 
+                orientation=Orientation.PORTRAIT,
+                xMargin=0.5, yMargin=0.5, 
+                pillarType=PillarType.DEFAULT,scrunchX=0,scrunchY=0,
+                verticalAlignment=VerticalAlignment.CENTRE, horizontalAlignment=HorizontalAlignment.CENTRE):
+
+        super(PIZEROLandScape,self).__init__("PIZERO Landscape",partName, self.boardWidth,self.boardHeight,
+                                            verticalAlignment=verticalAlignment, horizontalAlignment=horizontalAlignment,
+                                            xMargin=xMargin,yMargin=yMargin,
+                                            pillarType=pillarType,scrunchX=scrunchX,scrunchY=scrunchY,
+                                            pillarRadius=2.5,pillarHeight=4,holeRadius=1,
+                                            holeCounterSinkDepth=1.0,holeCounterSinkRadius=3.0 )
+
+    def placeComponent(self,x,y,tray,baseDepth):
+        tray = super(PIZEROLandScape,self).placeComponent(x,y,tray,baseDepth)
+        bottomX=x+self.xMargin
+        bottomY=y+self.yMargin
+        bottomLeftHoleX = bottomX + ((self.boardWidth-self.holeXSpacing)/2)
+        bottomLeftHoleY = bottomY + ((self.boardHeight-self.holeYSpacing)/2)
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        bottomLeftHoleY = bottomLeftHoleY+self.holeYSpacing
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        bottomLeftHoleX = bottomLeftHoleX+self.holeXSpacing
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        bottomLeftHoleY = bottomLeftHoleY-self.holeYSpacing
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        return tray
+
+
+
+class PIZEROLid(Device):
+
+    def __init__(self, partName, 
+                orientation=Orientation.LANDSCAPE,
+                xMargin=0.5, yMargin=0.5, 
+                pillarType=PillarType.DEFAULT,scrunchX=0,scrunchY=0,
+                verticalAlignment=VerticalAlignment.CENTRE, horizontalAlignment=HorizontalAlignment.CENTRE):
+
+        super(PIZEROLid,self).__init__("PIZEROLid",partName, PIZERO.boardWidth,PIZERO.boardHeight,scrunchX=scrunchX,scrunchY=scrunchY,
+                                            verticalAlignment=verticalAlignment, horizontalAlignment=horizontalAlignment,
+                                            xMargin=xMargin,yMargin=yMargin )
+
+    def placeComponent(self,x,y,tray,baseDepth):
+        self.xPos = x
+        self.yPos = y
+        return tray
+
+class PICO(PillarSupportedDevice):
+
+    boardHeight = 52.0
+    boardWidth = 21.0
+    holeYSpacing = 47.0
+    holeXSpacing = 11.4
+
+    def __init__(self, partName, 
+                orientation=Orientation.PORTRAIT,
+                xMargin=0.5, yMargin=0.5, 
+                pillarType=PillarType.DEFAULT,scrunchX=0,scrunchY=0,
+                verticalAlignment=VerticalAlignment.CENTRE, horizontalAlignment=HorizontalAlignment.CENTRE):
+
+        super(PICO,self).__init__("PICO",partName, self.boardWidth,self.boardHeight,
+                                            verticalAlignment=verticalAlignment, horizontalAlignment=horizontalAlignment,
+                                            xMargin=xMargin,yMargin=yMargin,
+                                            pillarType=pillarType,scrunchX=scrunchX,scrunchY=scrunchY,
+                                            pillarRadius=2.0,pillarHeight=4,holeRadius=0.9,
+                                            holeCounterSinkDepth=1.0,holeCounterSinkRadius=3.0 )
+
+    def placeComponent(self,x,y,tray,baseDepth):
+        tray = super(PICO,self).placeComponent(x,y,tray,baseDepth)
+        bottomX=x+self.xMargin
+        bottomY=y+self.yMargin
+        bottomLeftHoleX = bottomX + ((self.boardWidth-self.holeXSpacing)/2)
+        bottomLeftHoleY = bottomY + ((self.boardHeight-self.holeYSpacing)/2)
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        bottomLeftHoleY = bottomLeftHoleY+self.holeYSpacing
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        bottomLeftHoleX = bottomLeftHoleX+self.holeXSpacing
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        bottomLeftHoleY = bottomLeftHoleY-self.holeYSpacing
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        return tray
+
+class PICOLid(Device):
+
+    def __init__(self, partName, 
+                orientation=Orientation.LANDSCAPE,
+                xMargin=0.5, yMargin=0.5, 
+                pillarType=PillarType.DEFAULT,scrunchX=0,scrunchY=0,
+                verticalAlignment=VerticalAlignment.CENTRE, horizontalAlignment=HorizontalAlignment.CENTRE):
+
+        super(PICOLid,self).__init__("PICOLid",partName, PICO.boardWidth,PICO.boardHeight,scrunchX=scrunchX,scrunchY=scrunchY,
+                                            verticalAlignment=verticalAlignment, horizontalAlignment=horizontalAlignment,
+                                            xMargin=xMargin,yMargin=yMargin )
+
+    def placeComponent(self,x,y,tray,baseDepth):
+        self.xPos = x
+        self.yPos = y
+        return tray
+
+class PI4(PillarSupportedDevice):
+
+    boardHeight = 60.0
+    boardWidth = 89.0
+    holeXSpacing = 58.0
+    holeYSpacing = 49.0
+    holeXInset = 5.5
+    holeYInset = 5.5
+
+
+    def __init__(self, partName, 
+                orientation=Orientation.PORTRAIT,
+                xMargin=0.5, yMargin=0.5, 
+                pillarType=PillarType.DEFAULT,scrunchX=0,scrunchY=0,
+                verticalAlignment=VerticalAlignment.CENTRE, horizontalAlignment=HorizontalAlignment.CENTRE):
+
+        super(PI4,self).__init__("PI4",partName, self.boardWidth,self.boardHeight,
+                                            verticalAlignment=verticalAlignment, horizontalAlignment=horizontalAlignment,
+                                            xMargin=xMargin,yMargin=yMargin,
+                                            pillarType=pillarType,scrunchX=scrunchX,scrunchY=scrunchY,
+                                            pillarRadius=2.5,pillarHeight=4,holeRadius=1,
+                                            holeCounterSinkDepth=1.0,holeCounterSinkRadius=3.0 )
+
+    def placeComponent(self,x,y,tray,baseDepth):
+        tray = super(PI4,self).placeComponent(x,y,tray,baseDepth)
+        bottomX=x+self.xMargin+self.holeXInset
+        bottomY=y+self.yMargin+self.holeYInset
+        bottomLeftHoleX = x+self.xMargin+self.holeXInset
+        bottomLeftHoleY = y+self.yMargin+self.holeYInset
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        bottomLeftHoleY = bottomLeftHoleY+self.holeYSpacing
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        bottomLeftHoleX = bottomLeftHoleX+self.holeXSpacing
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        bottomLeftHoleY = bottomLeftHoleY-self.holeYSpacing
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        return tray
+
+class SmallSpeaker(PillarSupportedDevice):
+
+    boardHeight = 40.0
+    boardWidth = 40.0
+    holeXSpacing = 32.5
+    holeYSpacing = 32.5
+    holeXInset = 3.75
+    holeYInset = 3.75
+
+
+    def __init__(self, partName, 
+                orientation=Orientation.PORTRAIT,
+                xMargin=0.5, yMargin=0.5, 
+                pillarType=PillarType.DEFAULT,scrunchX=0,scrunchY=0,
+                verticalAlignment=VerticalAlignment.CENTRE, horizontalAlignment=HorizontalAlignment.CENTRE):
+
+        super(SmallSpeaker,self).__init__("SmallSpeaker",partName, self.boardWidth,self.boardHeight,
+                                            verticalAlignment=verticalAlignment, horizontalAlignment=horizontalAlignment,
+                                            xMargin=xMargin,yMargin=yMargin,
+                                            pillarType=pillarType,scrunchX=scrunchX,scrunchY=scrunchY,
+                                            pillarRadius=2.5,pillarHeight=4,holeRadius=1,
+                                            holeCounterSinkDepth=1.0,holeCounterSinkRadius=3.0 )
+
+    def placeComponent(self,x,y,tray,baseDepth):
+        tray = super(SmallSpeaker,self).placeComponent(x,y,tray,baseDepth)
+        bottomX=x+self.xMargin+self.holeXInset
+        bottomY=y+self.yMargin+self.holeYInset
+        bottomLeftHoleX = x+self.xMargin+self.holeXInset
+        bottomLeftHoleY = y+self.yMargin+self.holeYInset
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        bottomLeftHoleY = bottomLeftHoleY+self.holeYSpacing
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        bottomLeftHoleX = bottomLeftHoleX+self.holeXSpacing
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        bottomLeftHoleY = bottomLeftHoleY-self.holeYSpacing
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        return tray
+
+
+class SmallSpeaker(PillarSupportedDevice):
+
+    boardHeight = 42.0
+    boardWidth = 42.0
+    holeXSpacing = 32.5
+    holeYSpacing = 32.5
+    holeXInset = 4.75
+    holeYInset = 4.75
+
+
+    def __init__(self, partName, 
+                orientation=Orientation.PORTRAIT,
+                xMargin=0.5, yMargin=0.5, 
+                pillarType=PillarType.DEFAULT,scrunchX=0,scrunchY=0,
+                verticalAlignment=VerticalAlignment.CENTRE, horizontalAlignment=HorizontalAlignment.CENTRE):
+
+        super(SmallSpeaker,self).__init__("SmallSpeaker",partName, self.boardWidth,self.boardHeight,
+                                            verticalAlignment=verticalAlignment, horizontalAlignment=horizontalAlignment,
+                                            xMargin=xMargin,yMargin=yMargin,
+                                            pillarType=pillarType,scrunchX=scrunchX,scrunchY=scrunchY,
+                                            pillarRadius=2.5,pillarHeight=1.0,holeRadius=1,
+                                            holeCounterSinkDepth=1.0,holeCounterSinkRadius=3.0 )
+
+    def placeComponent(self,x,y,tray,baseDepth):
+        tray = super(SmallSpeaker,self).placeComponent(x,y,tray,baseDepth)
+        bottomX=x+self.xMargin+self.holeXInset
+        bottomY=y+self.yMargin+self.holeYInset
+        bottomLeftHoleX = x+self.xMargin+self.holeXInset
+        bottomLeftHoleY = y+self.yMargin+self.holeYInset
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        underHoleDepth=1.5
+        underHole = Part.makeCylinder(self.holeRadius, underHoleDepth, Base.Vector(bottomLeftHoleX,bottomLeftHoleY,-underHoleDepth))
+        tray = tray.cut(underHole)
+        bottomLeftHoleY = bottomLeftHoleY+self.holeYSpacing
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        underHole = Part.makeCylinder(self.holeRadius, underHoleDepth, Base.Vector(bottomLeftHoleX,bottomLeftHoleY,-underHoleDepth))
+        tray = tray.cut(underHole)
+        bottomLeftHoleX = bottomLeftHoleX+self.holeXSpacing
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        underHole = Part.makeCylinder(self.holeRadius, underHoleDepth, Base.Vector(bottomLeftHoleX,bottomLeftHoleY,-underHoleDepth))
+        tray = tray.cut(underHole)
+        bottomLeftHoleY = bottomLeftHoleY-self.holeYSpacing
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        underHole = Part.makeCylinder(self.holeRadius, underHoleDepth, Base.Vector(bottomLeftHoleX,bottomLeftHoleY,-underHoleDepth))
+        tray = tray.cut(underHole)
+
+        centreX = x+self.xMargin + (SmallSpeaker.boardWidth/2.0)
+        centreY = y+self.yMargin + (SmallSpeaker.boardHeight/2.0)
+        centrePos = Base.Vector(centreX,centreY,0)
+
+        holeDiam = 3.0
+
+        startPos = Base.Vector(bottomX+(holeDiam/2.0), centreY,-baseDepth)
+
+        holeCut=Part.makeCylinder((holeDiam) / 2.0,baseDepth,Base.Vector(0,0,0))
+
+        holeCut.translate(startPos)
+
+        for pipePos in range(0,24):
+            rotation=((pipePos/24.0))* 360
+            holeCut.rotate(centrePos,Base.Vector(0,0,1),rotation)
+            tray = tray.cut(holeCut)
+            holeCut.rotate(centrePos,Base.Vector(0,0,1),-rotation)
+
+        startPos = Base.Vector(bottomX+(holeDiam/2.0)+4, centreY,-baseDepth)
+
+        holeCut=Part.makeCylinder((holeDiam) / 2.0,baseDepth,Base.Vector(0,0,0))
+
+        holeCut.translate(startPos)
+
+        for pipePos in range(0,12):
+            rotation=((pipePos/12.0))* 360
+            holeCut.rotate(centrePos,Base.Vector(0,0,1),rotation)
+            tray = tray.cut(holeCut)
+            holeCut.rotate(centrePos,Base.Vector(0,0,1),-rotation)
+
+
+        startPos = Base.Vector(bottomX+(holeDiam/2.0)+8, centreY,-baseDepth)
+
+        holeCut=Part.makeCylinder((holeDiam) / 2.0,baseDepth,Base.Vector(0,0,0))
+
+        holeCut.translate(startPos)
+
+        for pipePos in range(0,8):
+            rotation=((pipePos/8.0))* 360
+            holeCut.rotate(centrePos,Base.Vector(0,0,1),rotation)
+            tray = tray.cut(holeCut)
+            holeCut.rotate(centrePos,Base.Vector(0,0,1),-rotation)
+
+        startPos = Base.Vector(bottomX+(holeDiam/2.0)+12, centreY,-baseDepth)
+
+        holeCut=Part.makeCylinder((holeDiam) / 2.0,baseDepth,Base.Vector(0,0,0))
+
+        holeCut.translate(startPos)
+
+        for pipePos in range(0,4):
+            rotation=((pipePos/4.0))* 360
+            holeCut.rotate(centrePos,Base.Vector(0,0,1),rotation)
+            tray = tray.cut(holeCut)
+            holeCut.rotate(centrePos,Base.Vector(0,0,1),-rotation)
+
+        return tray
+
+
+class SmallOled(PillarSupportedDevice):
+
+    boardHeight = 29.0
+    boardWidth = 29.0
+    holeXSpacing = 22.5
+    holeYSpacing = 22.5
+    holeXInset = 3.75
+    holeYInset = 3.75
+
+
+    def __init__(self, partName, 
+                orientation=Orientation.PORTRAIT,
+                xMargin=0.5, yMargin=0.5, 
+                pillarType=PillarType.DEFAULT,scrunchX=0,scrunchY=0,
+                verticalAlignment=VerticalAlignment.CENTRE, horizontalAlignment=HorizontalAlignment.CENTRE):
+
+        super(SmallOled,self).__init__("SmallOled",partName, self.boardWidth,self.boardHeight,
+                                            verticalAlignment=verticalAlignment, horizontalAlignment=horizontalAlignment,
+                                            xMargin=xMargin,yMargin=yMargin,
+                                            pillarType=pillarType,scrunchX=scrunchX,scrunchY=scrunchY,
+                                            pillarRadius=2.5,pillarHeight=4,holeRadius=1,
+                                            holeCounterSinkDepth=1.0,holeCounterSinkRadius=3.0 )
+
+    def placeComponent(self,x,y,tray,baseDepth):
+        tray = super(SmallOled,self).placeComponent(x,y,tray,baseDepth)
+        bottomX=x+self.xMargin+self.holeXInset
+        bottomY=y+self.yMargin+self.holeYInset
+        bottomLeftHoleX = x+self.xMargin+self.holeXInset
+        bottomLeftHoleY = y+self.yMargin+self.holeYInset
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        bottomLeftHoleY = bottomLeftHoleY+self.holeYSpacing
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        bottomLeftHoleX = bottomLeftHoleX+self.holeXSpacing
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        bottomLeftHoleY = bottomLeftHoleY-self.holeYSpacing
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        return tray
+
+class Alpha14Seg (PillarSupportedDevice):
+
+    boardHeight = 28.0
+    boardWidth = 52.0
+    holeXSpacing = 47.0
+    holeYSpacing = 24.0
+    holeXInset = 2.032
+    holeYInset = 2.032
+    pixelHeight=22.0
+    pixelWidth=52.0
+    dummyHeight=15
+
+
+    def __init__(self, partName, 
+                orientation=Orientation.PORTRAIT,
+                xMargin=0.5, yMargin=0.5, 
+                pillarType=PillarType.DEFAULT,scrunchX=0,scrunchY=0,
+                verticalAlignment=VerticalAlignment.CENTRE, horizontalAlignment=HorizontalAlignment.CENTRE):
+
+        super(Alpha14Seg,self).__init__("Alpha14Seg",partName, self.boardWidth,self.boardHeight,
+                                            verticalAlignment=verticalAlignment, horizontalAlignment=horizontalAlignment,
+                                            xMargin=xMargin,yMargin=yMargin,
+                                            pillarType=pillarType,scrunchX=scrunchX,scrunchY=scrunchY,
+                                            pillarRadius=2.5,pillarHeight=4,holeRadius=0.6,
+                                            holeCounterSinkDepth=1.0,holeCounterSinkRadius=3.0 )
+
+    def placeComponent(self,x,y,tray,baseDepth):
+        tray = super(Alpha14Seg,self).placeComponent(x,y,tray,baseDepth)
+        bottomX=x+self.xMargin+self.holeXInset
+        bottomY=y+self.yMargin+self.holeYInset
+        bottomLeftHoleX = x+self.xMargin+self.holeXInset
+        bottomLeftHoleY = y+self.yMargin+self.holeYInset
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        bottomLeftHoleY = bottomLeftHoleY+self.holeYSpacing
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        bottomLeftHoleX = bottomLeftHoleX+self.holeXSpacing
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        bottomLeftHoleY = bottomLeftHoleY-self.holeYSpacing
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+
+        bottomX=x+self.xMargin 
+        bottomY=y+self.yMargin 
+        slotX=bottomX
+        slotY=bottomY+(Alpha14Seg.boardHeight-Alpha14Seg.pixelHeight)/2.0
+        slotPos = Base.Vector(slotX, slotY, -baseDepth)
+        slot = Part.makeBox(Alpha14Seg.pixelWidth,Alpha14Seg.pixelHeight, baseDepth+self.pillarHeight,slotPos)
+        tray = tray.cut(slot)
+        dummy = Part.makeBox(Alpha14Seg.boardWidth,Alpha14Seg.boardHeight, Alpha14Seg.dummyHeight, Base.Vector(slotX, slotY, 0))
+#        tray = tray.fuse(dummy)
+
+        return tray
+
+class PI4Landscape(PillarSupportedDevice):
+
+    boardHeight = 89.0
+    boardWidth = 60.0
+    holeXSpacing = 49.0
+    holeYSpacing = 58.0
+    holeXInset = 5.5
+    holeYInset = 27.5
+
+
+    def __init__(self, partName, 
+                orientation=Orientation.PORTRAIT,
+                xMargin=0.5, yMargin=0.5, 
+                pillarType=PillarType.DEFAULT,scrunchX=0,scrunchY=0,
+                verticalAlignment=VerticalAlignment.CENTRE, horizontalAlignment=HorizontalAlignment.CENTRE):
+
+        super(PI4Landscape,self).__init__("PI4",partName, self.boardWidth,self.boardHeight,
+                                            verticalAlignment=verticalAlignment, horizontalAlignment=horizontalAlignment,
+                                            xMargin=xMargin,yMargin=yMargin,
+                                            pillarType=pillarType,scrunchX=scrunchX,scrunchY=scrunchY,
+                                            pillarRadius=2.5,pillarHeight=4,holeRadius=1,
+                                            holeCounterSinkDepth=1.0,holeCounterSinkRadius=3.0 )
+
+    def placeComponent(self,x,y,tray,baseDepth):
+        tray = super(PI4Landscape,self).placeComponent(x,y,tray,baseDepth)
+        bottomX=x+self.xMargin+self.holeXInset
+        bottomY=y+self.yMargin+self.holeYInset
+        bottomLeftHoleX = x+self.xMargin+self.holeXInset
+        bottomLeftHoleY = y+self.yMargin+self.holeYInset
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        bottomLeftHoleY = bottomLeftHoleY+self.holeYSpacing
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        bottomLeftHoleX = bottomLeftHoleX+self.holeXSpacing
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        bottomLeftHoleY = bottomLeftHoleY-self.holeYSpacing
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        return tray
+
+
+class PI4Lid(Device):
+
+    def __init__(self, partName, 
+                orientation=Orientation.LANDSCAPE,
+                xMargin=0.5, yMargin=0.5, 
+                pillarType=PillarType.DEFAULT,scrunchX=0,scrunchY=0,
+                verticalAlignment=VerticalAlignment.CENTRE, horizontalAlignment=HorizontalAlignment.CENTRE):
+
+        super(PI4Lid,self).__init__("PI4Lid",partName, PI4.boardWidth,PI4.boardHeight,scrunchX=scrunchX,scrunchY=scrunchY,
+                                            verticalAlignment=verticalAlignment, horizontalAlignment=horizontalAlignment,
+                                            xMargin=xMargin,yMargin=yMargin )
+
+    def placeComponent(self,x,y,tray,baseDepth):
+        self.xPos = x
+        self.yPos = y
+        return tray
+
+
+
+class JYMCUBluetooth(PillarSupportedDevice):
+
+    def __init__(self, partName, 
+                orientation=Orientation.LANDSCAPE,
+                xMargin=2.5, yMargin=2.5, 
+                pillarType=PillarType.DEFAULT,scrunchX=0,scrunchY=0,
+                verticalAlignment=VerticalAlignment.CENTRE, horizontalAlignment=HorizontalAlignment.CENTRE):
+
+        super(JYMCUBluetooth,self).__init__("JYMCUBluetooth",partName, 50,17+2.5+1,
+                                            verticalAlignment=verticalAlignment, horizontalAlignment=horizontalAlignment,
+                                            xMargin=xMargin,yMargin=yMargin,
+                                            pillarType=pillarType,scrunchX=scrunchX,scrunchY=scrunchY,
+                                            pillarRadius=2.5,pillarHeight=3,holeRadius=1,
+                                            holeCounterSinkDepth=1.0,holeCounterSinkRadius=3.0 )
+
+    boardWidth = 50
+    boardHeight = 17+2.5+1
+    holeXSpacing = 21.59
+    holeYSpacing = 17+1
+
+    def placeComponent(self,x,y,tray,baseDepth):
+        self.xPos = x
+        self.yPos = y
+        bottomX=x+self.xMargin
+        bottomY=y+self.yMargin
+        bottomLeftHoleX = bottomX + ((self.boardWidth-self.holeXSpacing)/2)
+        bottomLeftHoleY = bottomY + ((self.boardHeight-self.holeYSpacing)/2)
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        bottomLeftHoleY = bottomLeftHoleY+self.holeYSpacing
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        bottomLeftHoleX = bottomLeftHoleX+self.holeXSpacing
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        bottomLeftHoleY = bottomLeftHoleY-self.holeYSpacing
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        return tray
+
+class NeoPixel8x8Lid(Device):
+
+    def __init__(self, partName, 
+                orientation=Orientation.LANDSCAPE,
+                xMargin=0.5, yMargin=0.5, 
+                pillarType=PillarType.DEFAULT,scrunchX=0,scrunchY=0,
+                verticalAlignment=VerticalAlignment.CENTRE, horizontalAlignment=HorizontalAlignment.CENTRE):
+
+        super(NeoPixel8x8Lid,self).__init__("NeoPixel8x8Lid",partName, 72,72,
+                                            verticalAlignment=verticalAlignment, horizontalAlignment=horizontalAlignment,scrunchX=scrunchX,scrunchY=scrunchY,
+                                            xMargin=xMargin,yMargin=yMargin )
+
+    def placeComponent(self,x,y,tray,baseDepth):
+        self.xPos = x
+        self.yPos = y
+        return tray
+
+
+class NeoPixel8x8LidLightPipe(Device):
+
+    def __init__(self, partName, 
+                orientation=Orientation.LANDSCAPE,
+                xMargin=0.5, yMargin=0.5, 
+                pillarType=PillarType.DEFAULT,scrunchX=0,scrunchY=0,
+                verticalAlignment=VerticalAlignment.CENTRE, horizontalAlignment=HorizontalAlignment.CENTRE):
+
+        super(NeoPixel8x8LidLightPipe,self).__init__("NeoPixel8x8LidLightPipe",partName, 72,72,
+                                            verticalAlignment=verticalAlignment, horizontalAlignment=horizontalAlignment,scrunchX=scrunchX,scrunchY=scrunchY,
+                                            xMargin=xMargin,yMargin=yMargin )
+
+    def placeComponent(self,x,y,tray,baseDepth):
+        ledPipeOuterDiam=7.0
+        ledPipeThickness=1.0
+        ledHeight=6
+        diffuserHeight=0.8
+        xPixels=8
+        yPixels=8
+        ledSpacing = 9.15
+        xLength = (xPixels-1)*ledSpacing
+        yLength = (yPixels-1)*ledSpacing
+        bottomX=x+((self.width-xLength)/2.0)
+        bottomY=y+((self.height-yLength)/2.0)
+
+        print('x',x,'y',y)
+
+        startPos = Base.Vector(bottomX+(ledPipeOuterDiam/2.0)+4.5, bottomX+(ledPipeOuterDiam/2.0)+4.5,-baseDepth+diffuserHeight)
+
+        ledPipeOuterCut=Part.makeCylinder((ledPipeOuterDiam) / 2.0,ledHeight+baseDepth,Base.Vector(0,0,0))
+
+        ledPipe=ledPipeOuterCut.copy()
+
+        ledPipeCut = Part.makeCylinder((ledPipeOuterDiam-ledPipeThickness) / 2.0,ledHeight+baseDepth,Base.Vector(0,0,0))
+
+        ledPipe = ledPipe.cut(ledPipeCut)
+
+        ledPipe.translate(startPos)
+        ledPipeOuterCut.translate(startPos)
+
+        for i in range(8):
+            for j in range(8):
+                px = ledSpacing*j
+                py = ledSpacing*i
+                ledPipe.translate(Base.Vector(px, py,0))
+                ledPipeOuterCut.translate(Base.Vector(px, py,0))
+                tray=tray.cut(ledPipeOuterCut)
+                tray=tray.fuse(ledPipe)
+                ledPipe.translate(Base.Vector(-px, -py,0))
+                ledPipeOuterCut.translate(Base.Vector(-px, -py,0))
+
+        return tray
+
+class NeoPixel8x8Opening(Device):
+
+    def __init__(self, partName, 
+                orientation=Orientation.LANDSCAPE,
+                xMargin=0.5, yMargin=0.5, 
+                pillarType=PillarType.DEFAULT,scrunchX=0,scrunchY=0,
+                verticalAlignment=VerticalAlignment.CENTRE, horizontalAlignment=HorizontalAlignment.CENTRE):
+
+        super(NeoPixel8x8Opening,self).__init__("NeoPixel8x8Opening",partName, 72,72,
+                                            verticalAlignment=verticalAlignment, horizontalAlignment=horizontalAlignment,scrunchX=scrunchX,scrunchY=scrunchY,
+                                            xMargin=xMargin,yMargin=yMargin )
+
+    def placeComponent(self,x,y,tray,baseDepth):
+        self.xPos = x
+        self.yPos = y
+        cutGlass = Part.makeBox(self.width,self.height, baseDepth, Base.Vector(x,y,-baseDepth))
+        tray = tray.cut(cutGlass)
+        return tray
+
+class NeoPixelBase8x8(PillarSupportedDevice):
+
+    def __init__(self, partName, 
+                orientation=Orientation.LANDSCAPE,
+                xMargin=0.5, yMargin=0.5, 
+                pillarType=PillarType.DEFAULT,scrunchX=0,scrunchY=0,
+                pillarRadius=2.5,pillarHeight=12,holeRadius=1,
+                innerGridXOffset=5, innerGridYOffset=15,
+                verticalAlignment=VerticalAlignment.CENTRE, horizontalAlignment=HorizontalAlignment.CENTRE,
+                grid=[]):
+
+        super(NeoPixelBase8x8,self).__init__("NeoPixelBase8x8",partName, 72,72,
+                                            verticalAlignment=verticalAlignment, horizontalAlignment=horizontalAlignment,
+                                            xMargin=xMargin,yMargin=yMargin,
+                                            pillarType=pillarType,scrunchX=scrunchX,scrunchY=scrunchY,
+                                            pillarRadius=pillarRadius,pillarHeight=pillarHeight,holeRadius=1,
+                                            holeCounterSinkDepth=1.0,holeCounterSinkRadius=3.0,
+                                            innerGridXOffset=innerGridXOffset,innerGridYOffset=innerGridYOffset,
+                                            grid=grid )
+
+    boardWidth = 72
+    boardHeight = 72
+    holeXSpacing = 35.16/2.0
+    holeYSpacing = 65.8
+
+    def placeComponent(self,x,y,tray,baseDepth):
+        tray=super(NeoPixelBase8x8,self).placeComponent(x,y,tray,baseDepth)
+        self.pillarHeight = self.pillarHeight+self.componentHeight
+        self.xPos = x
+        self.yPos = y
+        bottomX=x+self.xMargin
+        if self.gridWidth > 72:
+            bottomX = bottomX + ((self.gridWidth - 72)/2)
+        bottomY=y+self.yMargin
+        if self.gridHeight > 72:
+            bottomY = bottomY + ((self.gridHeight - 72)/2)
+# Top Row
+        bottomLeftHoleX = bottomX + (self.boardWidth/2 - self.holeXSpacing)
+        bottomLeftHoleY = bottomY + ((self.boardHeight-self.holeYSpacing)/2)
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        bottomLeftHoleX = bottomX + (self.boardWidth/2)
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        bottomLeftHoleX = bottomX + (self.boardWidth/2 + self.holeXSpacing)
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+# Bottom Row
+        bottomLeftHoleY = bottomLeftHoleY+self.holeYSpacing
+        bottomLeftHoleX = bottomX + (self.boardWidth/2 - self.holeXSpacing)
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        bottomLeftHoleX = bottomX + (self.boardWidth/2)
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        bottomLeftHoleX = bottomX + (self.boardWidth/2 + self.holeXSpacing)
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        return tray
+
+class LedArray32x8Lid(Device):
+
+    def __init__(self, partName, 
+                orientation=Orientation.LANDSCAPE,
+                xMargin=0.5, yMargin=0.5, 
+                pillarType=PillarType.DEFAULT,scrunchX=0,scrunchY=0,
+                verticalAlignment=VerticalAlignment.CENTRE, horizontalAlignment=HorizontalAlignment.CENTRE):
+
+        super(LedArray32x8Lid,self).__init__("LedArray32x8Lid",partName, 4*32,32,
+                                            verticalAlignment=verticalAlignment, horizontalAlignment=horizontalAlignment,scrunchX=scrunchX,scrunchY=scrunchY,
+                                            xMargin=xMargin,yMargin=yMargin )
+
+    def placeComponent(self,x,y,tray,baseDepth):
+        self.xPos = x
+        self.yPos = y
+        return tray
+
+
+class LedArray32x8Base(PillarSupportedDevice):
+
+    def __init__(self, partName, 
+                orientation=Orientation.LANDSCAPE,
+                xMargin=0.5, yMargin=0.5, 
+                pillarType=PillarType.DEFAULT,scrunchX=0,scrunchY=0,
+                pillarRadius=2.5,pillarHeight=15,holeRadius=1,
+                innerGridXOffset=0, innerGridYOffset=0,
+                verticalAlignment=VerticalAlignment.CENTRE, horizontalAlignment=HorizontalAlignment.CENTRE,
+                grid=[]):
+
+        super(LedArray32x8Base,self).__init__("LedArray32x8Base",partName, self.boardWidth,self.boardHeight,
+                                            verticalAlignment=verticalAlignment, horizontalAlignment=horizontalAlignment,
+                                            xMargin=xMargin,yMargin=yMargin,
+                                            pillarType=pillarType,scrunchX=scrunchX,scrunchY=scrunchY,
+                                            pillarRadius=pillarRadius,pillarHeight=pillarHeight,holeRadius=1,
+                                            holeCounterSinkDepth=1.0,holeCounterSinkRadius=3.0,
+                                            innerGridXOffset=innerGridXOffset,innerGridYOffset=innerGridYOffset,
+                                            grid=grid )
+
+    boardWidth = 4*32
+    boardHeight = 32
+    holeXMargin = 3.0
+    holeYMargin = 6.0
+    holeXSpacing = 30
+    holeYSpacing = 120
+
+    def placeComponent(self,x,y,tray,baseDepth):
+        tray=super(LedArray32x8Base,self).placeComponent(x,y,tray,baseDepth)
+        self.pillarHeight = self.pillarHeight+self.componentHeight
+        self.xPos = x
+        self.yPos = y
+        bottomX=x+self.xMargin + self.holeXMargin
+        bottomY=y+self.yMargin + self.holeYMargin
+        bottomX1 = bottomX + self.boardWidth -(2*self.holeXMargin)
+        bottomY1 = bottomY + self.boardHeight -(2*self.holeYMargin)
+        tray=self.addPillar(tray,bottomX, bottomY,baseDepth)
+        tray=self.addPillar(tray,bottomX, bottomY1,baseDepth)
+        tray=self.addPillar(tray,bottomX1, bottomY1,baseDepth)
+        tray=self.addPillar(tray,bottomX1, bottomY,baseDepth)
+        return tray
+# Top Row
+        bottomLeftHoleX = bottomX + (self.boardWidth/2 - self.holeXSpacing)
+        bottomLeftHoleY = bottomY + ((self.boardHeight-self.holeYSpacing)/2)
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        bottomLeftHoleX = bottomX + (self.boardWidth/2)
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        bottomLeftHoleX = bottomX + (self.boardWidth/2 + self.holeXSpacing)
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+# Bottom Row
+        bottomLeftHoleY = bottomLeftHoleY+self.holeYSpacing
+        bottomLeftHoleX = bottomX + (self.boardWidth/2 - self.holeXSpacing)
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        bottomLeftHoleX = bottomX + (self.boardWidth/2)
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        bottomLeftHoleX = bottomX + (self.boardWidth/2 + self.holeXSpacing)
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        return tray
+
+
+class ThermalPrinter(PillarSupportedDevice):
+
+    def __init__(self, partName, 
+                orientation=Orientation.LANDSCAPE,
+                xMargin=0.5, yMargin=0.5, 
+                pillarType=PillarType.DEFAULT,scrunchX=0,scrunchY=0,
+                pillarRadius=2.5,pillarHeight=15,holeRadius=1,
+                innerGridXOffset=0, innerGridYOffset=0,
+                verticalAlignment=VerticalAlignment.CENTRE, horizontalAlignment=HorizontalAlignment.CENTRE,
+                grid=[]):
+
+        super(ThermalPrinter,self).__init__("ThermalPrinter",partName, self.boardWidth,self.boardHeight,
+                                            verticalAlignment=verticalAlignment, horizontalAlignment=horizontalAlignment,
+                                            xMargin=xMargin,yMargin=yMargin,
+                                            pillarType=pillarType,scrunchX=scrunchX,scrunchY=scrunchY,
+                                            pillarRadius=pillarRadius,pillarHeight=pillarHeight,holeRadius=1,
+                                            holeCounterSinkDepth=1.0,holeCounterSinkRadius=3.0,
+                                            innerGridXOffset=innerGridXOffset,innerGridYOffset=innerGridYOffset,
+                                            grid=grid )
+
+    boardWidth = 103.5
+    boardHeight = 57.5
+
+    def placeComponent(self,x,y,tray,baseDepth):
+        tray=super(ThermalPrinter,self).placeComponent(x,y,tray,baseDepth)
+        self.xPos = x
+        self.yPos = y
+        return tray
+
+class SmallThermalPrinter(PillarSupportedDevice):
+
+    def __init__(self, partName, 
+                orientation=Orientation.LANDSCAPE,
+                xMargin=0.5, yMargin=0.5, 
+                pillarType=PillarType.DEFAULT,scrunchX=0,scrunchY=0,
+                pillarRadius=2.5,pillarHeight=15,holeRadius=1,
+                innerGridXOffset=0, innerGridYOffset=0,
+                verticalAlignment=VerticalAlignment.CENTRE, horizontalAlignment=HorizontalAlignment.CENTRE,
+                grid=[]):
+
+        super(SmallThermalPrinter,self).__init__("SmallThermalPrinter",partName, self.boardWidth,self.boardHeight,
+                                            verticalAlignment=verticalAlignment, horizontalAlignment=horizontalAlignment,
+                                            xMargin=xMargin,yMargin=yMargin,
+                                            pillarType=pillarType,scrunchX=scrunchX,scrunchY=scrunchY,
+                                            pillarRadius=pillarRadius,pillarHeight=pillarHeight,holeRadius=1,
+                                            holeCounterSinkDepth=1.0,holeCounterSinkRadius=3.0,
+                                            innerGridXOffset=innerGridXOffset,innerGridYOffset=innerGridYOffset,
+                                            grid=grid )
+
+    boardWidth = 72.0
+    boardHeight = 73.5
+    holeXSpacing = 50.0
+    holeInset = 10.0
+    baseHoleRadius = 2.0
+
+    def placeComponent(self,x,y,tray,baseDepth):
+        tray=super(SmallThermalPrinter,self).placeComponent(x,y,tray,baseDepth)
+        self.xPos = x
+        self.yPos = y
+        bottomX=x+self.xMargin 
+        bottomY=y+self.yMargin 
+        holeX = bottomX + (self.boardWidth-self.holeXSpacing) / 2.0
+        holeY = bottomY + self.boardHeight - self.holeInset
+        hole = Part.makeCylinder(self.baseHoleRadius, baseDepth, Base.Vector(holeX,holeY,-baseDepth))
+        tray = tray.cut(hole)
+        holeX = holeX+self.holeXSpacing
+        hole = Part.makeCylinder(self.baseHoleRadius, baseDepth, Base.Vector(holeX,holeY,-baseDepth))
+        tray = tray.cut(hole)
+        
+        return tray
+
+class CoinSlotMechanism(PillarSupportedDevice):
+
+    def __init__(self, partName, 
+                orientation=Orientation.LANDSCAPE,
+                xMargin=0.5, yMargin=0.5, 
+                pillarType=PillarType.DEFAULT,scrunchX=0,scrunchY=0,
+                pillarRadius=2.5,pillarHeight=15,holeRadius=1,
+                innerGridXOffset=0, innerGridYOffset=0,
+                verticalAlignment=VerticalAlignment.CENTRE, horizontalAlignment=HorizontalAlignment.CENTRE,
+                grid=[]):
+
+        super(CoinSlotMechanism,self).__init__("CoinSlotMechanism",partName, self.boardWidth,self.boardHeight,
+                                            verticalAlignment=verticalAlignment, horizontalAlignment=horizontalAlignment,
+                                            xMargin=xMargin,yMargin=yMargin,
+                                            pillarType=pillarType,scrunchX=scrunchX,scrunchY=scrunchY,
+                                            pillarRadius=pillarRadius,pillarHeight=pillarHeight,holeRadius=1,
+                                            holeCounterSinkDepth=1.0,holeCounterSinkRadius=3.0,
+                                            innerGridXOffset=innerGridXOffset,innerGridYOffset=innerGridYOffset,
+                                            grid=grid )
+
+    boardWidth = 65.0
+    boardHeight = 160.5
+    holeXSpacing = 50.0
+    holeInset = 8.0
+    baseHoleRadius = 2.0
+
+    def placeComponent(self,x,y,tray,baseDepth):
+        tray=super(CoinSlotMechanism,self).placeComponent(x,y,tray,baseDepth)
+        return tray
+
+class CoinSlotMechanismLid(PillarSupportedDevice):
+
+    def __init__(self, partName, 
+                orientation=Orientation.LANDSCAPE,
+                xMargin=0., yMargin=0.5, 
+                pillarType=PillarType.DEFAULT,scrunchX=0,scrunchY=0,
+                verticalAlignment=VerticalAlignment.CENTRE, horizontalAlignment=HorizontalAlignment.CENTRE,grid=[]):
+
+        super(CoinSlotMechanismLid,self).__init__("CoinSlotMechanismLid",partName, CoinSlotMechanism.boardWidth,CoinSlotMechanism.boardHeight,
+                                            verticalAlignment=verticalAlignment, horizontalAlignment=horizontalAlignment,scrunchX=scrunchX,scrunchY=scrunchY,
+                                            xMargin=xMargin,yMargin=yMargin,grid=grid)
+
+    bezelSlotWidth=40.0
+    bezelSlotHeight=110.0
+    bezelMidSlotWidth=50.0
+    bezelMidSlotHeight=50.0
+    holeYMargin=3.0
+    fixingHoleYMargin=8.5
+    fittingHoleRadius=2.5
+    ledHoleRadius=4.0
+    fittingHoleXSpacing=50.0
+    fittingHoleYSpacing=100.0
+
+    def placeComponent(self,x,y,tray,baseDepth):
+        super(CoinSlotMechanismLid,self).placeComponent(x,y,tray,baseDepth)
+        bottomX=x+self.xMargin 
+        bottomY=y+self.yMargin 
+        slotX=bottomX+(CoinSlotMechanism.boardWidth-self.bezelSlotWidth)/2.0
+        slotY=bottomY+self.holeYMargin
+        slotPos = Base.Vector(slotX, slotY, -baseDepth)
+        slot = Part.makeBox(self.bezelSlotWidth,self.bezelSlotHeight, baseDepth,slotPos)
+        tray = tray.cut(slot)
+#
+        slotX=bottomX+(CoinSlotMechanism.boardWidth-self.bezelMidSlotWidth)/2.0
+        slotY=bottomY+40
+        slotPos = Base.Vector(slotX, slotY, -baseDepth)
+        slot = Part.makeBox(self.bezelMidSlotWidth,self.bezelMidSlotHeight, baseDepth,slotPos)
+        tray = tray.cut(slot)
+#
+        holeX= bottomX+(CoinSlotMechanism.boardWidth-self.fittingHoleXSpacing)/2.0
+        holeY=self.fixingHoleYMargin
+        hole=Part.makeCylinder(self.fittingHoleRadius, baseDepth, Base.Vector(holeX,holeY,-baseDepth))
+        tray=tray.cut(hole)
+        holeX=holeX+self.fittingHoleXSpacing
+        hole=Part.makeCylinder(self.fittingHoleRadius, baseDepth, Base.Vector(holeX,holeY,-baseDepth))
+        tray=tray.cut(hole)
+        holeX=holeX-self.fittingHoleXSpacing
+        holeY=holeY+self.fittingHoleYSpacing
+        hole=Part.makeCylinder(self.fittingHoleRadius, baseDepth, Base.Vector(holeX,holeY,-baseDepth))
+        tray=tray.cut(hole)
+        holeX=holeX+self.fittingHoleXSpacing
+        hole=Part.makeCylinder(self.fittingHoleRadius, baseDepth, Base.Vector(holeX,holeY,-baseDepth))
+        tray=tray.cut(hole)
+        holeX=bottomX+CoinSlotMechanism.boardWidth/2.0
+        holeY=140.0
+        hole=Part.makeCylinder(self.ledHoleRadius, baseDepth, Base.Vector(holeX,holeY,-baseDepth))
+        tray=tray.cut(hole)
+        return tray
+
+class SocketHole(Device):
+
+    socketRadius = 3.5
+    insetRadius = 7.0
+    threadDepth = 4.5
+    nutDepth = 1.5
+    nutRadius = 4.0
+    deviceSize = 15
+
+    def __init__(self, id,scrunchX=0,scrunchY=0):
+        super(SocketHole,self).__init__("SocketHole", id, width=10,height=10,scrunchX=scrunchX,scrunchY=scrunchY)
+        self.width = self.insetRadius*2
+        self.height = self.insetRadius*2
+
+    def placeComponent(self,x,y,tray,baseDepth):
+        holeX = x + self.width / 2.0
+        holeY = y + self.height / 2.0
+        hole = Part.makeCylinder(self.socketRadius, baseDepth, Base.Vector(holeX,holeY,-baseDepth))
+        tray = tray.cut(hole)
+        insetDepth = baseDepth - (self.threadDepth - self.nutDepth)
+        hole = Part.makeCylinder(self.insetRadius,insetDepth , Base.Vector(holeX,holeY,-insetDepth))
+        tray = tray.cut(hole)
+        return tray
+
+class BigButton(Device):
+
+    socketRadius = 14
+
+    def __init__(self, id,scrunchX=0,scrunchY=0):
+        super(BigButton,self).__init__("BigButton", id, width=10,height=10,scrunchX=scrunchX,scrunchY=scrunchY)
+
+    def placeComponent(self,x,y,tray,baseDepth):
+        holeX = x + self.width / 2.0
+        holeY = y + self.height / 2.0
+        hole = Part.makeCylinder(self.socketRadius, baseDepth, Base.Vector(holeX,holeY,-baseDepth))
+        tray = tray.cut(hole)
+        return tray
+
+class HugeButton(Device):
+
+    socketRadius = 14
+
+    def __init__(self, id,scrunchX=0,scrunchY=0):
+        super(HugeButton,self).__init__("HugeButton", id, width=10,height=10,scrunchX=scrunchX,scrunchY=scrunchY)
+        self.width = 65
+        self.height = 65
+
+    def placeComponent(self,x,y,tray,baseDepth):
+        holeX = x + self.width / 2.0
+        holeY = y + self.height / 2.0
+        hole = Part.makeCylinder(self.socketRadius, baseDepth, Base.Vector(holeX,holeY,-baseDepth))
+        tray = tray.cut(hole)
+        return tray
+
+class MediumButton(Device):
+
+    socketRadius = 15.3
+
+    def __init__(self, id,scrunchX=0,scrunchY=0):
+        super(MediumButton,self).__init__("MediumButton", id, width=40,height=36,scrunchX=scrunchX,scrunchY=scrunchY)
+
+    def placeComponent(self,x,y,tray,baseDepth):
+        holeX = x + self.width / 2.0
+        holeY = y + self.height / 2.0
+        hole = Part.makeCylinder(self.socketRadius, baseDepth, Base.Vector(holeX,holeY,-baseDepth))
+        tray = tray.cut(hole)
+        return tray
+
+
+class Joystick(Device):
+
+    socketRadius = 11
+    fittingRadius = 2.5
+
+    def __init__(self, id,scrunchX=0,scrunchY=0):
+        super(Joystick,self).__init__("Joystick", id,width=5,height=5,scrunchX=scrunchX,scrunchY=scrunchY)
+        self.width = 76
+        self.height = 76
+
+    def placeComponent(self,x,y,tray,baseDepth):
+        holeX = x + self.width / 2.0
+        holeY = y + self.height / 2.0
+        hole = Part.makeCylinder(self.socketRadius, baseDepth, Base.Vector(holeX,holeY,-baseDepth))
+        tray = tray.cut(hole)
+        holeX = holeX - 22.5
+        holeY = holeY - 22.5
+        hole = Part.makeCylinder(self.fittingRadius, baseDepth, Base.Vector(holeX,holeY,-baseDepth))
+        tray = tray.cut(hole)
+        holeX = holeX + 45.0
+        hole = Part.makeCylinder(self.fittingRadius, baseDepth, Base.Vector(holeX,holeY,-baseDepth))
+        tray = tray.cut(hole)
+        holeY = holeY + 45.0
+        hole = Part.makeCylinder(self.fittingRadius, baseDepth, Base.Vector(holeX,holeY,-baseDepth))
+        tray = tray.cut(hole)
+        holeX = holeX - 45.0
+        hole = Part.makeCylinder(self.fittingRadius, baseDepth, Base.Vector(holeX,holeY,-baseDepth))
+        tray = tray.cut(hole)
+        return tray
+
+class TwoHoles(Device):
+    def __init__(self, id,verticalAlignment=VerticalAlignment.CENTRE,scrunchX=0,scrunchY=0):
+        super(TwoHoles,self).__init__("TwoHoles", id,width=10,height=10,verticalAlignment=verticalAlignment,scrunchX=scrunchX,scrunchY=scrunchY)
+        self.hole1 = SocketHole(id+"h1")
+        self.hole2 = SocketHole(id+"h2")
+        self.width = self.hole1.width 
+        self.height = self.hole1.height + self.hole2.height
+        
+    def placeComponent(self,x,y,tray,baseDepth):
+        lx = x
+        ly = y
+        tray = self.hole1.placeComponent(lx,ly,tray,baseDepth)
+        ly = ly + self.hole1.height
+        tray = self.hole2.placeComponent(lx,ly,tray,baseDepth)
+        return tray
+
+class BatteryTop(Device):
+
+    def __init__(self, id):
+        super(BatteryTop,self).__init__("BatteryTop",id,widthHoleGap=45,heightHoleGap=52)
+
+    def placeComponent(self,x,y,tray,baseDepth):
+
+        # overload does nothing as no spacers required
+        return tray
+
+class Battery(Device):
+    
+    def __init__(self, id):
+        super(Battery,self).__init__("Battery", id,width=25,height=110)
+
+    def placeComponent(self,x,y,tray,baseDepth):
+        # overload does nothing as no spacers required
+        return tray
+
+class Leonardo(PillarSupportedDevice):
+
+    def __init__(self, partName, 
+                orientation=Orientation.LANDSCAPE,
+                xMargin=0.5, yMargin=0.5, 
+                pillarType=PillarType.DEFAULT,
+                verticalAlignment=VerticalAlignment.CENTRE, horizontalAlignment=HorizontalAlignment.CENTRE):
+
+        super(Leonardo,self).__init__("Leonardo",partName, 68,54,
+                                            verticalAlignment=verticalAlignment, horizontalAlignment=horizontalAlignment,
+                                            xMargin=xMargin,yMargin=yMargin,
+                                            pillarType=pillarType,
+                                            pillarRadius=2.5,pillarHeight=3,holeRadius=1,
+                                            holeCounterSinkDepth=1.0,holeCounterSinkRadius=3.0 )
+        self.width = 75 + 25
+        self.height = 60 + 5
+
+    boardWidth = 68 + 25 # add in the offset for the usb plug
+    boardHeight = 54
+    holeXSpacing = 21.59
+    holeYSpacing = 11.43
+
+    def placeComponent(self,x,y,tray,baseDepth):
+        super(Leonardo,self).placeComponent(x,y,tray,baseDepth)
+        bottomX=x+self.xMargin + 25
+        bottomY=y+self.yMargin + 5 
+        bottomLeftHoleX = bottomX + 15.24
+        bottomLeftHoleY = bottomY + 2.2
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        bottomLeftHoleX = bottomX + 67.5
+        bottomLeftHoleY = bottomY + 8.61
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        bottomLeftHoleX = bottomX + 67.5
+        bottomLeftHoleY = bottomY + 35.78
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        bottomLeftHoleX = bottomX + 16.97
+        bottomLeftHoleY = bottomY + 50.24
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        return tray
+
+class Case(object):
+    def __init__(self, shape=CaseShapeType.DEFAULT, width=10.0, height=10.0, base_thickness=4.0, lid_thickness=4.0, wall_thickness=4.0,base_side_height=10.0, lid_side_height=20.0, lid_inset_depth=5.0, fixing_hole_diameter=2.8, fixing_hole_horiz_inset=5.0,fit_gap=0.15,screw_type=BaseScrewType.DEFAULT,cutouts=True):
+        self.width = width
+        self.height = height
+        self.base_thickness = base_thickness
+        self.lid_thickness = lid_thickness
+        self.wall_thickness= wall_thickness
+        self.base_side_height = base_side_height
+        self.lid_side_height = lid_side_height
+        self.lid_inset_depth = lid_inset_depth
+        self.fixing_hole_diameter = fixing_hole_diameter
+        self.fit_gap = fit_gap
+        self.fixing_hole_vert_inset = lid_inset_depth/2.0
+        self.fixing_hole_horiz_inset = fixing_hole_horiz_inset
+        self.screw_type = screw_type
+        self.shape = shape
+        self.cutouts = cutouts
+
+    def makeBox(self,width,height,depth,position):
+        if self.shape == CaseShapeType.DEFAULT:
+            return Part.makeBox(width,height,depth,position)
+        if self.shape == CaseShapeType.SQUARE:
+            return Part.makeBox(width,height,depth,position)
+        if self.shape == CaseShapeType.ROUND:
+            if width>height:
+                radius=width/2
+            else:
+                radius=height/2
+            result = Part.makeCylinder(radius,depth,position)
+            result.translate(Base.Vector(radius,radius,0))
+            return result
+        if self.shape == CaseShapeType.MUSICBOX:
+            result = Part.makeBox(width,height,depth,position)
+#            for pos in [(-1,-1,25),(1,-1,25),(-1,1,50),(1,1,50)]:
+            for pos in [(-1,-1,10),(1,-1,10),(-1,1,10),(1,1,10)]:
+                xo=pos[0]
+                yo=pos[1]
+                r=pos[2]
+                w2 = width/2.0
+                x = w2 + ((w2-r)*xo)
+                h2 = height/2.0
+                y = h2 + ((h2-r)*yo)
+                cp = Base.Vector(x,y,0)
+                cutout = Part.makeBox(r,r,depth,position)
+                cutout.translate(cp)
+                cutout.translate(Base.Vector(-r/2.0,-r/2.0,0))
+                cutout.translate(Base.Vector(r/2.0*xo,r/2.0*yo,0))
+                result = result.cut(cutout)
+                round = Part.makeCylinder(r,depth,cp)
+                round.translate(position)
+                result = result.fuse(round)
+            return result
+
+
+    def Get_Base(self):
+        total_width = self.width + 2 * self.wall_thickness
+        total_height = self.height + 2 * self.wall_thickness
+        total_depth = self.base_side_height + self.base_thickness
+        base = self.makeBox(total_width,total_height, total_depth, Base.Vector(-self.wall_thickness,-self.wall_thickness,-self.base_thickness))
+        base_content = self.makeBox(self.width,self.height,self.base_side_height, Base.Vector(0,0,0))
+        base = base.cut(base_content)
+        if self.cutouts == False:
+            return base
+        top_lip_cut = self.makeBox(total_width,total_height, self.lid_inset_depth+self.fit_gap, Base.Vector(-self.wall_thickness,-self.wall_thickness,self.base_side_height-self.lid_inset_depth-self.fit_gap))
+        base = base.cut(top_lip_cut)
+        fill_width = total_width - self.wall_thickness
+        fill_height = total_height - self.wall_thickness
+        top_lip_fill = self.makeBox(fill_width,fill_height, self.lid_inset_depth+self.fit_gap, Base.Vector(-self.wall_thickness/2.0,-self.wall_thickness/2.0,self.base_side_height-self.lid_inset_depth-self.fit_gap))
+        base = base.fuse(top_lip_fill)
+        top_lip_cut = self.makeBox(self.width,self.height, self.lid_inset_depth+self.fit_gap, Base.Vector(0,0,self.base_side_height-self.lid_inset_depth-self.fit_gap))
+        base = base.cut(top_lip_cut)
+
+        if self.screw_type == BaseScrewType.SIDE_SCREWS:
+            if self.shape == CaseShapeType.DEFAULT or self.shape == CaseShapeType.SQUARE:
+	            holePos = Base.Vector(-self.wall_thickness,self.fixing_hole_horiz_inset,self.base_side_height - self.fixing_hole_vert_inset)
+	            hole = Part.makeCylinder(self.fixing_hole_diameter/2.0,self.wall_thickness,holePos,Base.Vector(1,0,0))
+	            base = base.cut(hole)
+	            holePos = Base.Vector(-self.wall_thickness,self.height - self.fixing_hole_horiz_inset,self.base_side_height - self.fixing_hole_vert_inset)
+	            hole = Part.makeCylinder(self.fixing_hole_diameter/2.0,self.wall_thickness,holePos,Base.Vector(1,0,0))
+	            base = base.cut(hole)
+	            holePos = Base.Vector(self.width,self.height - self.fixing_hole_horiz_inset,self.base_side_height - self.fixing_hole_vert_inset)
+	            hole = Part.makeCylinder(self.fixing_hole_diameter/2.0,self.wall_thickness,holePos,Base.Vector(1,0,0))
+	            base = base.cut(hole)
+	            holePos = Base.Vector(self.width,self.fixing_hole_horiz_inset,self.base_side_height - self.fixing_hole_vert_inset)
+	            hole = Part.makeCylinder(self.fixing_hole_diameter/2.0,self.wall_thickness,holePos,Base.Vector(1,0,0))
+	            base = base.cut(hole)
+            if self.shape == CaseShapeType.ROUND:
+	            holePos = Base.Vector(self.width/2.0,-self.wall_thickness/2.0,self.base_side_height - self.fixing_hole_vert_inset)
+	            hole = Part.makeCylinder(self.fixing_hole_diameter/2.0,self.wall_thickness,holePos,Base.Vector(0,1,0))
+	            base = base.cut(hole)
+        return base
+
+    def Get_Lid(self):
+        total_width = self.width + 2 * self.wall_thickness
+        total_height = self.height + 2 * self.wall_thickness
+        if self.cutouts==False:
+            plugHeight=10.0
+            plugThickness=3.0
+            gap=0.5
+            lid = self.makeBox(total_width,total_height, self.lid_thickness, Base.Vector(-self.wall_thickness,-self.wall_thickness,-self.lid_thickness))
+            plug = self.makeBox(self.width-(2*gap),self.height-(2*gap), plugHeight, Base.Vector(gap,gap,0))
+            lid = lid.fuse(plug)
+            w = self.width - (2*plugThickness)
+            h = self.height - (2*plugThickness)
+            plugCut = self.makeBox(w,h, plugHeight, Base.Vector(plugThickness,plugThickness,0))
+            lid = lid.cut(plugCut)
+            return lid
+        total_depth = self.lid_side_height + self.lid_thickness
+        lid = self.makeBox(total_width,total_height, total_depth, Base.Vector(-self.wall_thickness,-self.wall_thickness,-self.lid_thickness))
+        lid_content = self.makeBox(self.width,self.height,self.lid_side_height, Base.Vector(0,0,0))
+        lid = lid.cut(lid_content)
+        recess_width = self.width + self.wall_thickness + (self.fit_gap)
+        recess_height = self.height + self.wall_thickness + (self.fit_gap)
+        recess_depth = self.lid_inset_depth + self.fit_gap/2
+        lid_recess = self.makeBox(recess_width,recess_height,recess_depth, Base.Vector(-(self.wall_thickness/2)-(self.fit_gap/2),-(self.wall_thickness/2)-(self.fit_gap/2),self.lid_side_height-recess_depth))
+        lid = lid.cut(lid_recess)
+        if self.screw_type == BaseScrewType.SIDE_SCREWS:
+            if self.shape == CaseShapeType.DEFAULT or self.shape == CaseShapeType.SQUARE:
+	            holePos = Base.Vector(-self.wall_thickness,self.fixing_hole_horiz_inset,self.lid_side_height - self.fixing_hole_vert_inset)
+	            hole = Part.makeCylinder(self.fixing_hole_diameter/2.0,self.wall_thickness,holePos,Base.Vector(1,0,0))
+	            lid = lid.cut(hole)
+	            holePos = Base.Vector(-self.wall_thickness,self.height - self.fixing_hole_horiz_inset,self.lid_side_height - self.fixing_hole_vert_inset)
+	            hole = Part.makeCylinder(self.fixing_hole_diameter/2.0,self.wall_thickness,holePos,Base.Vector(1,0,0))
+	            lid = lid.cut(hole)
+	            holePos = Base.Vector(self.width,self.height - self.fixing_hole_horiz_inset,self.lid_side_height - self.fixing_hole_vert_inset)
+	            hole = Part.makeCylinder(self.fixing_hole_diameter/2.0,self.wall_thickness,holePos,Base.Vector(1,0,0))
+	            lid = lid.cut(hole)
+	            holePos = Base.Vector(self.width,self.fixing_hole_horiz_inset,self.lid_side_height - self.fixing_hole_vert_inset)
+	            hole = Part.makeCylinder(self.fixing_hole_diameter/2.0,self.wall_thickness,holePos,Base.Vector(1,0,0))
+	            lid = lid.cut(hole)
+            if self.shape == CaseShapeType.ROUND:
+	            holePos = Base.Vector(self.width/2.0,-self.wall_thickness,self.lid_side_height - self.fixing_hole_vert_inset)
+	            hole = Part.makeCylinder(self.fixing_hole_diameter/2.0,self.wall_thickness,holePos,Base.Vector(0,1,0))
+	            lid = lid.cut(hole)
+        return lid
+
+    def size_to_grid(self,grid):
+        self.width=0
+        self.height=0
+        y=0
+        totalRowHeight=0
+        self.no_of_rows = 0
+        for row in grid:
+            self.no_of_rows = self.no_of_rows+1
+            x=0
+            rowHeight=0
+            for part in row:
+                print("   Sizing:", part.partName," width: ", part.width, " height: ", part.height," scrunchX: ", part.scrunchX, " scrunchY: ", part.scrunchY)
+                x = x + part.width
+                x = x - part.scrunchX
+                actualHeight = part.height - part.scrunchY
+                if actualHeight > rowHeight:
+                    rowHeight = actualHeight
+            if x>self.width:
+                self.width=x
+            y = y + rowHeight
+        self.height = y
+
+    def setSize(self,baseGrid, lidGrid):
+        self.size_to_grid(baseGrid)
+        gridWidth = self.width
+        gridHeight = self.height
+        self.size_to_grid(lidGrid)
+        if self.width < gridWidth:
+            self.width = gridWidth
+        if self.height < gridHeight:
+            self.height = gridHeight
+        print("Size set width:",self.width," height",self.height)
+
+    def makeParts(self, baseGrid, lidGrid):
+        self.setSize(baseGrid,lidGrid)
+        base = self.Get_Base()
+        self.baseDesign = self.placeParts(base,baseGrid,self.base_thickness)
+        lid = self.Get_Lid()
+        self.lidDesign = self.placeParts(lid,lidGrid,self.lid_thickness)
+
+    def placeParts(self,base,grid,thickness):
+        width=0.0
+        height=0.0
+        y=0.0
+        totalRowHeight=0.0
+        rowCount=0
+        for row in grid:
+            rowCount = rowCount + 1
+            rowHeight=0.0
+            thisRowWidth=0.0
+            thisRowHeight=0.0
+            partCount=0
+            for part in row:
+                thisRowWidth = thisRowWidth+part.width
+                partCount = partCount + 1
+                if part.height > thisRowHeight:
+                    thisRowHeight = part.height
+            spareWidth = self.width - thisRowWidth
+            Xspacing = spareWidth / (partCount)
+            x=0.0
+            for part in row:
+                print("Grid placing:", part.partName)
+                if part.verticalAlignment == VerticalAlignment.BOTTOM:
+                    ypos=y
+                if part.verticalAlignment == VerticalAlignment.CENTRE:
+                    ypos = y + ((thisRowHeight - part.height) / 2)
+                    print("    vert centre:", ypos)
+                if part.verticalAlignment == VerticalAlignment.TOP:
+                    if rowCount == self.no_of_rows:
+                        # doing the very top row - align to top of box
+                        ypos = self.height - part.height
+                    else:
+                        ypos = y + (thisRowHeight - part.height)
+                if part.horizontalAlignment == HorizontalAlignment.LEFT:
+                    xpos = x
+                if part.horizontalAlignment == HorizontalAlignment.CENTRE:
+                    xpos = x + (Xspacing/2)
+                    print("    horiz centre", xpos)
+                if part.horizontalAlignment == HorizontalAlignment.RIGHT:
+                    xpos = x + Xspacing
+                base = part.placeComponent(xpos,ypos-part.scrunchY,base,thickness)
+                x = x + part.width + Xspacing
+                if part.height > rowHeight:
+                    rowHeight = part.height
+            if x>width:
+                width=x
+            y = y + rowHeight
+        height = y
+        return base
+
+    def chamfer(self,item):
+        item.addObject("Part::Chamfer","Chamfer")
+        item.Chamfer.Base = FreeCAD.ActiveDocument.Shape
+        __fillets__ = []
+        __fillets__.append((1,1.00,1.00))
+        __fillets__.append((2,1.00,1.00))
+        __fillets__.append((3,1.00,1.00))
+        __fillets__.append((4,1.00,1.00))
+        __fillets__.append((5,1.00,1.00))
+        __fillets__.append((7,1.00,1.00))
+        __fillets__.append((10,1.00,1.00))
+        __fillets__.append((14,1.00,1.00))
+        item.Chamfer.Edges = __fillets__
+        del __fillets__
+        return item
+
+    def show(self):
+        self.lidDesign.translate(Base.Vector(0,0,100))
+        Part.show(self.lidDesign)
+        Part.show(self.baseDesign)
+        Gui.SendMsgToActiveView("ViewFit")
+        Gui.activeDocument().activeView().viewAxometric()
+
+def ESP32Light():
+    print("Making ESP32 Light")
+    proc = DOITESP32("DOITESP32",yMargin=10,orientation=Orientation.PORTRAIT)
+    lid = NeoPixel8x8LidLightPipe("lid")
+    baseComp = [[proc]]
+    baseDisplay = NeoPixelBase8x8("display",grid=baseComp)
+    lidGrid = [[lid]]
+    baseGrid = [[baseDisplay]]
+    test_case = Case(wall_thickness=3,base_side_height=27,lid_thickness=3.0,base_thickness=3.0,lid_side_height=5)
+    test_case.makeParts(baseGrid,lidGrid)
+    holePos = Base.Vector(-test_case.wall_thickness,test_case.height/2,test_case.base_thickness+6)
+    hole = Part.makeCylinder(4.15,test_case.wall_thickness,holePos,Base.Vector(1,0,0))
+    base = test_case.baseDesign.cut(hole)
+    Part.show(base)
+    lid = test_case.lidDesign
+    lid.translate(Base.Vector(0,0,100))
+#    lid = test_case.chamfer(lid)
+    Part.show(lid)
+    Gui.SendMsgToActiveView("ViewFit")
+    Gui.activeDocument().activeView().viewAxometric()
+
+def ESP32LedArray():
+    print("Making ESP32 32x8 led array")
+    proc = DOITESP32("DOITESP32")
+    lid = LedArray32x8Lid("lid")
+    baseComp = [[proc]]
+    baseDisplay = LedArray32x8Base("display",grid=baseComp)
+    lidGrid = [[lid]]
+    baseGrid = [[baseDisplay]]
+    test_case = Case(wall_thickness=3,base_side_height=35,base_thickness=3.0,lid_side_height=5,lid_thickness=3.0)
+    test_case.makeParts(baseGrid,lidGrid)
+    holePos = Base.Vector(-test_case.wall_thickness,test_case.height/2,test_case.base_thickness+6)
+    hole = Part.makeCylinder(4.15,test_case.wall_thickness,holePos,Base.Vector(1,0,0))
+    base = test_case.baseDesign.cut(hole)
+    Part.show(base)
+    test_case.lidDesign.translate(Base.Vector(0,0,100))
+    Part.show(test_case.lidDesign)
+    Gui.SendMsgToActiveView("ViewFit")
+    Gui.activeDocument().activeView().viewAxometric()
+
+def PIZEROBox():
+    print("Making Pi Zero Box")
+    proc = PIZERO("PIZERO")
+    lid = PIZEROLid("PIZEROLid")
+    baseComp = [[proc]]
+    lidGrid = [[lid]]
+    test_case = Case(wall_thickness=3,base_side_height=5,base_thickness=.8,lid_side_height=17)
+    test_case.makeParts(lidGrid,baseComp)
+    holePos = Base.Vector(-test_case.wall_thickness,test_case.height/2,test_case.base_thickness+6)
+    hole = Part.makeCylinder(4.15,test_case.wall_thickness,holePos,Base.Vector(1,0,0))
+    lid = test_case.lidDesign.cut(hole)
+    lid.translate(Base.Vector(0,0,100))
+    Part.show(lid)
+    Part.show(test_case.baseDesign)
+    Gui.SendMsgToActiveView("ViewFit")
+    Gui.activeDocument().activeView().viewAxometric()
+
+def PI4box():
+    print("Making Pi 4 Box")
+    proc = PI4("PI4")
+    lid = PI4Lid("Pi4 lid")
+    baseComp = [[proc]]
+    lidGrid = [[lid]]
+    test_case = Case(wall_thickness=3,base_side_height=5,base_thickness=.8,lid_side_height=17)
+    test_case.makeParts(lidGrid,baseComp)
+    holePos = Base.Vector(-test_case.wall_thickness,test_case.height/2,test_case.base_thickness+6)
+    hole = Part.makeCylinder(4.15,test_case.wall_thickness,holePos,Base.Vector(1,0,0))
+    lid = test_case.lidDesign.cut(hole)
+    lid.translate(Base.Vector(0,0,100))
+    Part.show(lid)
+    Part.show(test_case.baseDesign)
+    Gui.SendMsgToActiveView("ViewFit")
+    Gui.activeDocument().activeView().viewAxometric()
+
+def ESP32Box():
+    print("Making ESP32 Box")
+    proc = DOITESP32("DOITESP32")
+    lid = DOITESP32Lid("DOITESP32Lid")
+    baseComp = [[proc]]
+    lidGrid = [[lid]]
+    test_case = Case(wall_thickness=3,base_side_height=5,base_thickness=.8,lid_side_height=17)
+    test_case.makeParts(lidGrid,baseComp)
+    holePos = Base.Vector(-test_case.wall_thickness,test_case.height/2,test_case.base_thickness+6)
+    hole = Part.makeCylinder(4.15,test_case.wall_thickness,holePos,Base.Vector(1,0,0))
+    lid = test_case.lidDesign.cut(hole)
+    lid.translate(Base.Vector(0,0,100))
+    Part.show(lid)
+    Part.show(test_case.baseDesign)
+    Gui.SendMsgToActiveView("ViewFit")
+    Gui.activeDocument().activeView().viewAxometric()
+
+def PIRSensorBox():
+    print("Making PIR Sensor Box")
+    proc = PIRSensor("PIRSensor")
+    lid = PIRSensorLid("PIRSensorLid")
+    baseComp = [[proc]]
+    lidGrid = [[lid]]
+    test_case = Case(wall_thickness=3,base_side_height=15,base_thickness=.8,lid_side_height=5)
+    test_case.makeParts(baseComp,lidGrid)
+    lid = test_case.lidDesign
+    lid.translate(Base.Vector(0,0,100))
+    Part.show(lid)
+    Part.show(test_case.baseDesign)
+    Gui.SendMsgToActiveView("ViewFit")
+    Gui.activeDocument().activeView().viewAxometric()
+
+def SmallSensorPixelRingBox():
+    print("Making Ring LED Box with small PIR sensor")
+    proc = WEMOS("Wemos",verticalAlignment=VerticalAlignment.TOP, horizontalAlignment=HorizontalAlignment.LEFT,xMargin=0.5, yMargin=0.5)
+    pir = SmallPIRSensor("testsmallsensor")
+
+    holder = Device("blank", "blank", PixelRing.boardHeight+3, PixelRing.boardWidth+3,grid=[[proc]])
+    lid = PixelRingLightPipeLid("PixelRingLid",grid=[[pir]])
+    case = Case(wall_thickness=3,base_side_height=40,base_thickness=3.0,lid_side_height=5)
+    case.makeParts([[holder]],[[lid]])
+    holeHeight=12
+    holePos = Base.Vector((case.width-holeHeight)/2.0,case.height,-3.0)
+    hole = Part.makeBox(holeHeight,3,8,holePos)
+    case.baseDesign = case.baseDesign.cut(hole)
+    case.show()
+
+def MediumButtonPixelRingBox():
+    print("Making Ring LED Box with medium button")
+    proc = WEMOS("Wemos",verticalAlignment=VerticalAlignment.TOP, horizontalAlignment=HorizontalAlignment.LEFT,xMargin=0.5, yMargin=0.5)
+    button = MediumButton("mediumbutton")
+
+    holder = Device("blank", "blank", PixelRing.boardHeight+3, PixelRing.boardWidth+3,grid=[[proc]])
+    lid = PixelRingLightPipeLid("PixelRingLid",grid=[[button]])
+    case = Case(wall_thickness=3,base_side_height=30,base_thickness=3.0,lid_side_height=5)
+    case.makeParts([[holder]],[[lid]])
+    holeHeight=12
+    holePos = Base.Vector((case.width-holeHeight)/2.0,case.height,-3.0)
+    hole = Part.makeBox(holeHeight,3,8,holePos)
+    case.baseDesign = case.baseDesign.cut(hole)
+    case.show()
+
+
+
+
+def PixelRingBox():
+    print("Making Ring LED Box")
+    proc = WEMOS("Wemos",verticalAlignment=VerticalAlignment.TOP, horizontalAlignment=HorizontalAlignment.LEFT,xMargin=0.5, yMargin=0.5)
+
+    holder = Device("blank", "blank", PixelRing.boardHeight, PixelRing.boardWidth,grid=[[proc]])
+
+    lid = PixelRingLightPipeLid("PixelRingLid")
+    case = Case(wall_thickness=3,base_side_height=20,base_thickness=3.0,lid_side_height=5)
+    case.makeParts([[holder]],[[lid]])
+    holeHeight=12
+    holePos = Base.Vector((case.width-holeHeight)/2.0,case.height,-3.0)
+    hole = Part.makeBox(holeHeight,3,8,holePos)
+    case.baseDesign = case.baseDesign.cut(hole)
+    case.show()
+
+def PirSensorBoxWemos():
+    print("Making PIR Sensor Box")
+    proc = WEMOS("Wemos",verticalAlignment=VerticalAlignment.TOP, horizontalAlignment=HorizontalAlignment.LEFT,xMargin=0.5, yMargin=0.5)
+
+    holder = Device("blank", "blank", PixelRing.boardHeight, PixelRing.boardWidth,grid=[[proc]])
+
+    lid = PIRSensorLidHole("PIRSensorLidHole")
+    case = Case(wall_thickness=3,base_side_height=20,base_thickness=3.0,lid_side_height=5)
+    case.makeParts([[holder]],[[lid]])
+    holeHeight=13
+    holePos = Base.Vector((case.width-holeHeight)/2.0,case.height-1,-3.0)
+    hole = Part.makeBox(holeHeight,4,8,holePos)
+    case.baseDesign = case.baseDesign.cut(hole)
+    case.show()
+
+
+def PixelRingBoxWemos():
+    print("Making Pixel Ring box for Wemos")
+    proc = WEMOS("Wemos",verticalAlignment=VerticalAlignment.TOP, horizontalAlignment=HorizontalAlignment.LEFT,xMargin=0.5, yMargin=0.5)
+
+    holder = Device("blank", "blank", PixelRing.boardHeight, PixelRing.boardWidth,grid=[[proc]])
+
+    lid = PixelRingLightPipeLid("Pixel Ring hole")
+    case = Case(wall_thickness=3,base_side_height=20,base_thickness=3.0,lid_side_height=5)
+    case.makeParts([[holder]],[[lid]])
+    holeHeight=14
+    holePos = Base.Vector((case.width-holeHeight)/2.0,case.height-1,-3.0)
+    hole = Part.makeBox(holeHeight,6,9,holePos)
+    case.baseDesign = case.baseDesign.cut(hole)
+    case.show()
+
+
+def PirSensorBoxWemosWithPixelRing():
+    print("Making PIR Sensor Box")
+    proc = WEMOS("Wemos",verticalAlignment=VerticalAlignment.TOP, horizontalAlignment=HorizontalAlignment.LEFT,xMargin=0.5, yMargin=0.5)
+
+    #holder = Device("blank", "blank", PixelRing.boardHeight, PixelRing.boardWidth,grid=[[proc]])
+    holder = Device("blank", "blank", 10, 10,grid=[[proc]])
+
+    lid1 = PIRSensorLidHole("PIRSensorLidHole")
+    lid2 = PixelRingLightPipeLid("PixelRingLid")
+    case = Case(wall_thickness=3,base_side_height=20,base_thickness=3.0,lid_side_height=5)
+    case.makeParts([[holder]],[[lid1,lid2]])
+    holeHeight=14.0
+    holePos = Base.Vector((case.width-holeHeight)/2.0,-case.wall_thickness,-3.0)
+    hole = Part.makeBox(holeHeight,6,9,holePos)
+    case.baseDesign = case.baseDesign.cut(hole)
+    case.show()
+
+
+def PirSensorFlatBoxWemosWithPixelRing():
+    print("Making PIR Sensor Box")
+    proc = WEMOS("Wemos",verticalAlignment=VerticalAlignment.TOP, horizontalAlignment=HorizontalAlignment.LEFT,xMargin=0.5, yMargin=0.5)
+
+    holder = Device("blank", "blank", PixelRing.boardHeight, PixelRing.boardWidth,grid=[[proc]])
+
+    lid1 = PIRSensorLidFlat("PIRSensorLidFlat")
+    lid2 = PixelRingLightPipeLid("PixelRingLid")
+    case = Case(wall_thickness=3,base_side_height=20,base_thickness=3.0,lid_side_height=5)
+    case.makeParts([[holder]],[[lid1,lid2]])
+    holeHeight=13
+    holePos = Base.Vector((case.width-holeHeight)/2.0,case.height-1,-3.0)
+    hole = Part.makeBox(holeHeight,4,8,holePos)
+    case.baseDesign = case.baseDesign.cut(hole)
+    case.show()
+
+def PixelRingSensorBox():
+    print("Making Ring LED Box")
+    proc = WEMOS("Wemos",verticalAlignment=VerticalAlignment.TOP, horizontalAlignment=HorizontalAlignment.LEFT,xMargin=0.5, yMargin=0.5)
+
+    holder = Device("blank", "blank", PixelRing.boardHeight, PixelRing.boardWidth,grid=[[proc]])
+
+    lid = PixelRingLightPipeLid("PixelRingLid")
+    case = Case(wall_thickness=3,base_side_height=20,base_thickness=3.0,lid_side_height=5)
+    case.makeParts([[holder]],[[lid]])
+    holeHeight=12
+    holePos = Base.Vector((case.width-holeHeight)/2.0,case.height,-3.0)
+    hole = Part.makeBox(holeHeight,3,8,holePos)
+    case.baseDesign = case.baseDesign.cut(hole)
+    case.show()
+
+
+
+def DoitPixelRingSensorBox():
+    print("Making Ring LED SensorBox")
+    proc = DOITESP32("DOITESP32")
+    procLid = DOITESP32Lid("DOITESP32Lid")
+    sensor = PIRSensor("PIRSensor")
+    sensorGrid = [[sensor]]
+    ring = PixelRing("PixelRing",grid=sensorGrid)
+    pirLid=PIRSensorLid("PIRSensorLid")
+    sensorLid = [[pirLid]]
+    lid = PixelRingLightPipeLid("PixelRingLid",grid=sensorLid)
+    case = Case(wall_thickness=3,base_side_height=15,base_thickness=3.0,lid_thickness=3.0,lid_side_height=5.0)
+    case.makeParts([[proc,ring]],[[procLid,lid]])
+    holePos = Base.Vector(case.width,case.height/2,case.base_thickness+3)
+    hole = Part.makeCylinder(2.0,case.wall_thickness,holePos,Base.Vector(1,0,0))
+    case.baseDesign = case.baseDesign.cut(hole)
+    case.show()
+
+
+def smallPIRSensorTest():
+    pir = SmallPIRSensor("testsmallsensor")
+    width = pir.boardWidth + (2*pir.xMargin)
+    height = pir.boardHeight + (2*pir.yMargin)
+    base = Part.makeBox(width,height,3,Base.Vector(0,0,-3))
+    base = pir.placeComponent(0,0,base,3)
+    Part.show(base)
+    Gui.SendMsgToActiveView("ViewFit")
+    Gui.activeDocument().activeView().viewAxometric()
+
+class SmallServo(PillarSupportedDevice):
+
+    boardHeight = 45.0
+    boardWidth = 45.0
+    holeXSpacing = 15.0
+    driveHoleRadius = 6.5
+    gearBoxHoleRadius = 3.5
+    gearBoxHoleXOffset = 6.3
+    outerHoleDepth = 1.3
+    screwholeDepth = 2.0
+
+    def __init__(self, partName, 
+                orientation=Orientation.PORTRAIT,
+                xMargin=0.5, yMargin=0.5, 
+                pillarType=PillarType.DEFAULT,
+                verticalAlignment=VerticalAlignment.CENTRE, horizontalAlignment=HorizontalAlignment.CENTRE):
+
+        super(SmallServo,self).__init__("PIRSensor",partName, self.boardWidth,self.boardHeight,
+                                            verticalAlignment=verticalAlignment, horizontalAlignment=horizontalAlignment,
+                                            xMargin=xMargin,yMargin=yMargin,
+                                            pillarType=pillarType,
+                                            pillarRadius=2.5,pillarHeight=5.0,holeRadius=1.0,
+                                            holeCounterSinkDepth=1.0,holeCounterSinkRadius=3.0 )
+
+    def placeComponent(self,x,y,tray,baseDepth):
+        tray = super(SmallServo,self).placeComponent(x,y,tray,baseDepth)
+        bottomX=x+self.xMargin
+        bottomY=y+self.yMargin
+        holeX = bottomX + (self.boardWidth/2.0)
+        holeY = bottomY + (self.boardHeight/2.0)
+        holePos = Base.Vector(holeX,holeY,0)
+        hole = Part.makeCylinder(self.driveHoleRadius,baseDepth+100,holePos,Base.Vector(0,0,-1))
+        tray = tray.cut(hole)
+        holePos = Base.Vector(holeX+self.gearBoxHoleXOffset,holeY,0)
+        hole = Part.makeCylinder(self.gearBoxHoleRadius,baseDepth+100,holePos,Base.Vector(0,0,-1))
+        tray = tray.cut(hole)
+        tray=self.addPillar(tray,holeX+19,holeY,baseDepth)
+        tray=self.addPillar(tray,holeX-9,holeY,baseDepth)
+        return tray    
+
+
+class WEMOSHoles(PillarSupportedDevice):
+
+    boardHeight = 35.0
+    boardWidth = 38.0
+    holeXSpacing = 31.0
+    holeYSpacing = 30.0
+
+    def __init__(self, partName, 
+                orientation=Orientation.PORTRAIT,
+                xMargin=0.5, yMargin=0.5, 
+                pillarType=PillarType.DEFAULT,
+                verticalAlignment=VerticalAlignment.CENTRE, horizontalAlignment=HorizontalAlignment.CENTRE):
+
+        super(WEMOSHoles,self).__init__("WEMOS holes",partName, self.boardWidth,self.boardHeight,
+                                            verticalAlignment=verticalAlignment, horizontalAlignment=horizontalAlignment,
+                                            xMargin=xMargin,yMargin=yMargin,
+                                            pillarType=pillarType,
+                                            pillarRadius=2.5,pillarHeight=3,holeRadius=1,
+                                            holeCounterSinkDepth=1.0,holeCounterSinkRadius=3.0 )
+
+    def placeComponent(self,x,y,tray,baseDepth):
+        super(WEMOSHoles,self).placeComponent(x,y,tray,baseDepth)
+        bottomX=x+self.xMargin
+        bottomY=y+self.yMargin
+        bottomLeftHoleX = bottomX + ((self.boardWidth-self.holeXSpacing)/2)
+        bottomLeftHoleY = bottomY + ((self.boardHeight-self.holeYSpacing)/2)
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        bottomLeftHoleY = bottomLeftHoleY+self.holeYSpacing
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        bottomLeftHoleX = bottomLeftHoleX+self.holeXSpacing
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+        bottomLeftHoleY = bottomLeftHoleY-self.holeYSpacing
+        tray=self.addPillar(tray,bottomLeftHoleX,bottomLeftHoleY,baseDepth)
+
+        holeWidth=12
+        hx = bottomX + ((self.boardWidth-holeWidth)/2)
+        holePos = Base.Vector(hx,y+self.boardHeight+self.yMargin,-baseDepth)
+        hole = Part.makeBox(holeWidth,100,8,holePos)
+        tray = tray.cut(hole)
+        return tray
+
+class TwoPillarTerminalBlock(PillarSupportedDevice):
+
+    boardHeight = 30.0
+    boardWidth = 25.0
+    pillarXSpacing = 10.0
+
+    def __init__(self, partName, 
+                orientation=Orientation.PORTRAIT,
+                xMargin=0.5, yMargin=0.5, 
+                pillarType=PillarType.DEFAULT,
+                verticalAlignment=VerticalAlignment.CENTRE, horizontalAlignment=HorizontalAlignment.CENTRE):
+
+        super(TwoPillarTerminalBlock,self).__init__("TwoPillarTerminalBlock",partName, self.boardWidth,self.boardHeight,
+                                            verticalAlignment=verticalAlignment, horizontalAlignment=horizontalAlignment,
+                                            xMargin=xMargin,yMargin=yMargin,
+                                            pillarType=pillarType,
+                                            pillarRadius=2.5,pillarHeight=5.0,holeRadius=1.0,
+                                            holeCounterSinkDepth=1.0,holeCounterSinkRadius=3.0 )
+
+    def placeComponent(self,x,y,tray,baseDepth):
+        tray = super(TwoPillarTerminalBlock,self).placeComponent(x,y,tray,baseDepth)
+        bottomX=x+self.xMargin
+        bottomY=y+self.yMargin
+        pX = bottomX + (self.boardWidth/2.0)-(self.pillarXSpacing/2.0)
+        pY = bottomY + (self.boardHeight/2.0)
+        tray=self.addPillar(tray,pX,pY,baseDepth)
+        pX = pX + self.pillarXSpacing
+        tray=self.addPillar(tray,pX,pY,baseDepth)
+
+        return tray    
+
+def WemosAndTerminalBlockBox():
+    print("Making a wemos and terminal block box")
+    proc = WEMOSHoles("Wemos",verticalAlignment=VerticalAlignment.TOP, horizontalAlignment=HorizontalAlignment.LEFT,xMargin=0.5, yMargin=0.5)
+    terminal = TwoPillarTerminalBlock("terminal block")
+
+    holder = Device("blank", "blank", PixelRing.boardHeight+3, PixelRing.boardWidth+3,grid=[[proc]])
+    lid = WEMOSLid("WEMOSLid")
+    case = Case(wall_thickness=3,base_side_height=20,base_thickness=3.0,lid_side_height=5)
+    case.makeParts([[holder,terminal]],[[lid]])
+
+    holeHeight=12
+    holePos = Base.Vector(65,20,8)
+    hole = Part.makeCylinder(4.3,100,holePos,Base.Vector(0,9,0))
+    case.baseDesign = case.baseDesign.cut(hole)
+
+    holePos = Base.Vector(65,20,8)
+    hole = Part.makeCylinder(3.0,100,holePos,Base.Vector(0,-9,0))
+    case.baseDesign = case.baseDesign.cut(hole)
+
+    case.show()
+
+def smallServoTest():
+    servo = SmallServo("testSmallServo")
+    width = servo.boardWidth + (2*servo.xMargin)
+    height = servo.boardHeight + (2*servo.yMargin)
+    base = Part.makeBox(width,height,3,Base.Vector(0,0,-3))
+    base = servo.placeComponent(0,0,base,3)
+    Part.show(base)
+    Gui.SendMsgToActiveView("ViewFit")
+    Gui.activeDocument().activeView().viewAxometric()
+
+def smallServoTestBox():
+    print("Making a servo box")
+    proc = WEMOS("Wemos",verticalAlignment=VerticalAlignment.TOP, horizontalAlignment=HorizontalAlignment.LEFT,xMargin=0.5, yMargin=0.5)
+    servo = SmallServo("smallservo")
+
+    holder = Device("blank", "blank", PixelRing.boardHeight+3, PixelRing.boardWidth+3,grid=[[proc]])
+    lid = WEMOSLid("WEMOSLid",grid=[[servo]])
+    case = Case(wall_thickness=3,base_side_height=30,base_thickness=3.0,lid_side_height=5)
+    case.makeParts([[holder]],[[lid]])
+    holeHeight=12
+    holePos = Base.Vector((case.width-holeHeight)/2.0,case.height,-3.0)
+    hole = Part.makeBox(holeHeight,3,8,holePos)
+    case.baseDesign = case.baseDesign.cut(hole)
+    case.show()
+
+
+def ESP32MAX7219LedArray():
+    print("Making WEMOS 32x8 led array")
+    proc = DOITESP32("DOITESP32")
+    lid = LedArray32x8Lid("lid")
+    baseComp = [[proc]]
+    baseDisplay = LedArray32x8Base("display")
+    lidGrid = [[lid]]
+    baseGrid = [[baseDisplay]]
+    test_case = Case(wall_thickness=3,base_side_height=25,base_thickness=3.0,lid_side_height=5,lid_thickness=3.0,cutouts=False)
+    test_case.makeParts(baseGrid,lidGrid)
+    holePos = Base.Vector(-test_case.wall_thickness,test_case.height/2,test_case.base_thickness+6)
+    hole = Part.makeCylinder(4.15,test_case.wall_thickness,holePos,Base.Vector(1,0,0))
+    base = test_case.baseDesign.cut(hole)
+
+    Part.show(base)
+    test_case.lidDesign.translate(Base.Vector(0,0,100))
+    Part.show(test_case.lidDesign)
+    Gui.SendMsgToActiveView("ViewFit")
+    Gui.activeDocument().activeView().viewAxometric()
+
+
+def WemosPrinter():
+    print("Making WEMOS Printer")
+    proc = WEMOS("Wemos",verticalAlignment=VerticalAlignment.TOP, horizontalAlignment=HorizontalAlignment.LEFT,xMargin=0.5, yMargin=0.5)
+    lid = WEMOSLid("WEMOSLid")
+    baseComp = [[proc]]
+    baseDisplay = ThermalPrinter("printer",grid=baseComp)
+    lidGrid = [[lid]]
+    baseGrid = [[baseDisplay]]
+    test_case = Case(wall_thickness=3,base_side_height=75,base_thickness=3.0,lid_side_height=5,lid_thickness=3.0,cutouts=False)
+    test_case.makeParts(baseGrid,lidGrid)
+    holePos = Base.Vector(-test_case.wall_thickness,test_case.height/2,test_case.base_thickness+6)
+    hole = Part.makeCylinder(4.15,test_case.wall_thickness,holePos,Base.Vector(1,0,0))
+    base = test_case.baseDesign.cut(hole)
+
+    Part.show(base)
+    test_case.lidDesign.translate(Base.Vector(0,0,100))
+    Part.show(test_case.lidDesign)
+    Gui.SendMsgToActiveView("ViewFit")
+    Gui.activeDocument().activeView().viewAxometric()
+
+
+
+##############################################################################
+#  ALL THE SAME SIZE UNDER HERE
+##############################################################################
+
+
+def WemosMediumButtonPixelRingBox():
+    print("Making Ring LED Box with medium button")
+    proc = WEMOS("Wemos",verticalAlignment=VerticalAlignment.TOP, horizontalAlignment=HorizontalAlignment.LEFT,xMargin=0.5, yMargin=0.5)
+    button = MediumButton("mediumbutton")
+
+    holder = Device("blank", "blank", PixelRing.boardHeight+3, PixelRing.boardWidth+3,grid=[[proc]])
+    lid = PixelRingLightPipeLid("PixelRingLid",grid=[[button]])
+    case = Case(wall_thickness=3,base_side_height=30,base_thickness=3.0,lid_side_height=5)
+    case.makeParts([[holder]],[[lid]])
+    holeHeight=14
+    holePos = Base.Vector((case.width-holeHeight)/2.0,-3,-3.0)
+    hole = Part.makeBox(holeHeight,6,9,holePos)
+    case.baseDesign = case.baseDesign.cut(hole)
+    case.show()
+
+def WemosPotentionerPixelRingBox():
+    print("Making Ring LED Box with potentiometer")
+    proc = WEMOS("Wemos",verticalAlignment=VerticalAlignment.TOP, horizontalAlignment=HorizontalAlignment.LEFT,xMargin=0.5, yMargin=0.5)
+    button = MediumButton("mediumbutton")
+
+    holder = Device("blank", "blank", PixelRing.boardHeight+3, PixelRing.boardWidth+3,grid=[[proc]])
+    lid = PixelRingLightPipeLid("PixelRingLid",grid=[[button]])
+    case = Case(wall_thickness=3,base_side_height=25,base_thickness=3.0,lid_side_height=5)
+    case.makeParts([[holder]],[[lid]])
+    holeHeight=14
+    holePos = Base.Vector((case.width-holeHeight)/2.0,case.height,-3.0)
+    hole = Part.makeBox(holeHeight,6,9,holePos)
+    case.baseDesign = case.baseDesign.cut(hole)
+    case.show()
+
+def WemosPixelRingBox():
+    print("Making Ring LED Box")
+    proc = WEMOS("Wemos",verticalAlignment=VerticalAlignment.TOP, horizontalAlignment=HorizontalAlignment.LEFT,xMargin=0.0, yMargin=0.0)
+    holder = Device("blank", "blank", PixelRing.boardHeight+3, PixelRing.boardWidth+3,grid=[[proc]])
+    lid = PixelRingLightPipeLid("PixelRingLid")
+    case = Case(wall_thickness=3,base_side_height=20,base_thickness=3.0,lid_side_height=5)
+    case.makeParts([[holder]],[[lid]])
+    holeHeight=14
+    holePos = Base.Vector((case.width-holeHeight)/2.0,-3,-3.0)
+    hole = Part.makeBox(holeHeight,6,9,holePos)
+    case.baseDesign = case.baseDesign.cut(hole)
+    case.show()
+
+def WemosServoBox():
+    print("Making Ring LED Box with servo")
+    proc = WEMOS("Wemos",verticalAlignment=VerticalAlignment.TOP, horizontalAlignment=HorizontalAlignment.LEFT,xMargin=0.5, yMargin=0.5)
+    servo = SmallServo("smallservo")
+    holder = Device("blank", "blank", PixelRing.boardHeight+3, PixelRing.boardWidth+3,grid=[[proc]])
+    lid = WEMOSLid("WEMOSLid",grid=[[servo]])
+    case = Case(wall_thickness=3,base_side_height=30,base_thickness=3.0,lid_side_height=5)
+    case.makeParts([[holder]],[[lid]])
+    holeHeight=14
+    holePos = Base.Vector((case.width-holeHeight)/2.0,-3,-3.0)
+    hole = Part.makeBox(holeHeight,6,9,holePos)
+    case.baseDesign = case.baseDesign.cut(hole)
+    case.show()
+
+def WemosPirBox():
+    print("Making PIR box")
+    proc = WEMOS("Wemos",verticalAlignment=VerticalAlignment.TOP, horizontalAlignment=HorizontalAlignment.LEFT,xMargin=0.5, yMargin=0.5)
+    holder = Device("blank", "blank", PixelRing.boardHeight+3, PixelRing.boardWidth+3,grid=[[proc]])
+    lid = PIRSensorLidHole("PIRSensorLidHole")
+    case = Case(wall_thickness=3,base_side_height=20,base_thickness=3.0,lid_side_height=5)
+    case.makeParts([[holder]],[[lid]])
+    holeHeight=14
+    holePos = Base.Vector((case.width-holeHeight)/2.0,-3,-3.0)
+    hole = Part.makeBox(holeHeight,6,9,holePos)
+    case.baseDesign = case.baseDesign.cut(hole)
+    case.show()
+
+def WemosPixelRingSensorBox():
+    print("Making PIR Sensor Box")
+    proc = WEMOS("Wemos",verticalAlignment=VerticalAlignment.TOP, horizontalAlignment=HorizontalAlignment.LEFT,xMargin=0.5, yMargin=0.5)
+
+    #holder = Device("blank", "blank", PixelRing.boardHeight, PixelRing.boardWidth,grid=[[proc]])
+    holder = Device("blank", "blank", 10, 10,grid=[[proc]])
+
+    lid1 = PIRSensorLidHole("PIRSensorLidHole")
+    lid2 = PixelRingLightPipeLid("PixelRingLid")
+    case = Case(wall_thickness=3,base_side_height=20,base_thickness=3.0,lid_side_height=5)
+    case.makeParts([[holder]],[[lid1,lid2]])
+    holeHeight=14.0
+    holePos = Base.Vector((case.width-holeHeight)/2.0,-case.wall_thickness,-3.0)
+    hole = Part.makeBox(holeHeight,6,9,holePos)
+    case.baseDesign = case.baseDesign.cut(hole)
+    case.show()
+
+def WemosPixelRingSensorButtonBox():
+    print("Making PIR Sensor Box")
+    proc = WEMOS("Wemos",verticalAlignment=VerticalAlignment.TOP, horizontalAlignment=HorizontalAlignment.LEFT,xMargin=0, yMargin=0)
+    button = MediumButton("mediumbutton")
+    #holder = Device("blank", "blank", PixelRing.boardHeight, PixelRing.boardWidth,grid=[[proc]])
+    holder = Device("blank", "blank", 10, 10,grid=[[proc]])
+
+    lid1 = PIRSensorLidHole("PIRSensorLidHole")
+    lid2 = PixelRingLightPipeLid("PixelRingLid",grid=[[button]])
+    case = Case(wall_thickness=3,base_side_height=20,base_thickness=3.0,lid_side_height=5)
+    case.makeParts([[holder]],[[lid1,lid2]])
+    holeHeight=14.0
+    holePos = Base.Vector((case.width-holeHeight)/2.0,-case.wall_thickness,-3.0)
+    hole = Part.makeBox(holeHeight,6,9,holePos)
+    case.baseDesign = case.baseDesign.cut(hole)
+    case.show()
+
+def WemosBox():
+    print("Making Wemos box")
+    box_wall_thickness=3.0
+    box_base_thickness=2
+    box_side_height=17
+    proc = WEMOS("Wemos",verticalAlignment=VerticalAlignment.TOP, horizontalAlignment=HorizontalAlignment.LEFT,xMargin=1.0, yMargin=0.0)
+    lid = WEMOSLid("Wemos Lid")
+    case = Case(wall_thickness=box_wall_thickness,base_side_height=box_side_height,base_thickness=box_base_thickness,lid_side_height=5)
+    case.makeParts([[proc]],[[lid]])
+#
+# cut the connector hole
+#
+    holeHeight=12
+    holeWidth=15
+    holePos = Base.Vector((case.width-holeWidth)/2.0,-box_wall_thickness,-3.0)
+    hole = Part.makeBox(holeWidth,box_wall_thickness+2,holeHeight,holePos)
+    case.baseDesign = case.baseDesign.cut(hole)
+#
+#  now the cable hole
+#
+    cableHolePos = Base.Vector(case.width/2.0,case.height,box_side_height/2.0)
+    hole = Part.makeCylinder(3,box_wall_thickness,cableHolePos, Base.Vector(0,1,0))
+    case.baseDesign = case.baseDesign.cut(hole)
+    case.show()
+
+def WemosSmallPrinter():
+    print("Making Wemos box")
+    box_wall_thickness=2.0
+    box_base_thickness=2
+    box_side_height=62
+    proc = WEMOS("Wemos",verticalAlignment=VerticalAlignment.TOP, horizontalAlignment=HorizontalAlignment.LEFT,xMargin=1.0, yMargin=1.0)
+    holder = Device("blank", "blank", 10, 10,grid=[[proc]])
+    printer = SmallThermalPrinter("Printer",verticalAlignment=VerticalAlignment.TOP, horizontalAlignment=HorizontalAlignment.LEFT,xMargin=1.0, yMargin=0.0,grid=[[holder]])
+    lid = WEMOSLid("Wemos Lid")
+    case = Case(wall_thickness=box_wall_thickness,base_side_height=box_side_height,base_thickness=box_base_thickness,lid_side_height=5,cutouts=False)
+    case.makeParts([[printer]],[[lid]])
+#
+# cut the connector hole
+#
+    holeHeight=12
+    holeWidth=15
+    holePos = Base.Vector((case.width-holeWidth)/2.0,-box_wall_thickness,-3.0)
+    hole = Part.makeBox(holeWidth,box_wall_thickness+2,holeHeight,holePos)
+    case.baseDesign = case.baseDesign.cut(hole)
+#
+    cableHoleRadius=4.0
+    cableHolePos = Base.Vector(10,-box_wall_thickness,box_base_thickness+cableHoleRadius)
+    hole = Part.makeCylinder(cableHoleRadius,box_wall_thickness,cableHolePos, Base.Vector(0,1,0))
+    case.baseDesign = case.baseDesign.cut(hole)
+    case.show()
+#
+
+
+def CoinSlot():
+    print("Making coinslot box")
+    box_wall_thickness=2.0
+    box_base_thickness=2
+    box_side_height=120
+    proc = WEMOS("Wemos",verticalAlignment=VerticalAlignment.TOP, horizontalAlignment=HorizontalAlignment.LEFT,xMargin=1.0, yMargin=1.0)
+    holder = Device("blank", "blank", 10, 10,grid=[[proc]])
+    printer = CoinSlotMechanism("CoinSlot",verticalAlignment=VerticalAlignment.TOP, horizontalAlignment=HorizontalAlignment.LEFT,xMargin=1.0, yMargin=0.0,grid=[[holder]])
+    lid = CoinSlotMechanismLid("Conslot Lid")
+    case = Case(wall_thickness=box_wall_thickness,base_side_height=box_side_height,base_thickness=box_base_thickness,lid_side_height=5,cutouts=False)
+    case.makeParts([[printer]],[[lid]])
+#
+# cut the connector hole
+#
+    holeHeight=12
+    holeWidth=15
+    holePos = Base.Vector((case.width-holeWidth)/2.0,-box_wall_thickness,-3.0)
+    hole = Part.makeBox(holeWidth,box_wall_thickness+2,holeHeight,holePos)
+    case.baseDesign = case.baseDesign.cut(hole)
+#
+    cableHoleRadius=4.0
+    cableHolePos = Base.Vector(10,-box_wall_thickness,box_base_thickness+cableHoleRadius)
+    hole = Part.makeCylinder(cableHoleRadius,box_wall_thickness,cableHolePos, Base.Vector(0,1,0))
+    case.baseDesign = case.baseDesign.cut(hole)
+    case.show()
+#
+
+
+
+def BME280Box():
+    print("Making BME280 box")
+    box_wall_thickness=3.0
+    box_base_thickness=2
+    box_side_height=17
+    proc = BME280("BME280",verticalAlignment=VerticalAlignment.TOP, horizontalAlignment=HorizontalAlignment.LEFT,xMargin=1.0, yMargin=0.0)
+    lid = BME280Lid("BME280 Lid")
+    case = Case(wall_thickness=box_wall_thickness,base_side_height=box_side_height,base_thickness=box_base_thickness,lid_side_height=5,screw_type=BaseScrewType.NO_SCREWS,)
+    case.makeParts([[proc]],[[lid]])
+#
+#  now the cable hole
+#
+    cableHolePos = Base.Vector(case.width/2.0,case.height,box_side_height/2.0)
+    hole = Part.makeCylinder(3,box_wall_thickness,cableHolePos, Base.Vector(0,1,0))
+    case.baseDesign = case.baseDesign.cut(hole)
+    case.show()
+
+def CCS811Box():
+    print("Making CCS811 box")
+    box_wall_thickness=3.0
+    box_base_thickness=2
+    box_side_height=17
+    proc = CCS811("CCS811",verticalAlignment=VerticalAlignment.TOP, horizontalAlignment=HorizontalAlignment.LEFT,xMargin=1.0, yMargin=0.0)
+    lid = CCS811Lid("BME280 Lid")
+    case = Case(wall_thickness=box_wall_thickness,base_side_height=box_side_height,base_thickness=box_base_thickness,lid_side_height=5,screw_type=BaseScrewType.NO_SCREWS,)
+    case.makeParts([[proc]],[[lid]])
+#
+#  now the cable hole
+#
+    cableHolePos = Base.Vector(case.width/2.0,case.height,box_side_height/2.0)
+    hole = Part.makeCylinder(3,box_wall_thickness,cableHolePos, Base.Vector(0,1,0))
+    case.baseDesign = case.baseDesign.cut(hole)
+    case.show()
+
+def PICOBox():
+    print("Making PICO box")
+    box_wall_thickness=2.0
+    box_base_thickness=2
+    box_side_height=17
+    proc = PICO("Pico",xMargin=1.0, yMargin=0.0)
+    lid = PICOLid("Pico Lid")
+    case = Case(wall_thickness=box_wall_thickness,base_side_height=box_side_height,base_thickness=box_base_thickness,lid_side_height=5)
+    case.makeParts([[proc]],[[lid]])
+#
+# cut the connector hole
+#
+    holeHeight=12
+    holeWidth=15
+    holePos = Base.Vector((case.width-holeWidth)/2.0,-box_wall_thickness,-3.0)
+    hole = Part.makeBox(holeWidth,box_wall_thickness,holeHeight,holePos)
+    case.baseDesign = case.baseDesign.cut(hole)
+#
+#  now the cable hole
+#
+    cableHolePos = Base.Vector(case.width/2.0,case.height,box_side_height/2.0)
+    hole = Part.makeCylinder(3,box_wall_thickness,cableHolePos, Base.Vector(0,1,0))
+    case.baseDesign = case.baseDesign.cut(hole)
+    case.show()
+
+def PICOPixelRingSensorButtonBox():
+    print("Making PIR Sensor Box")
+    proc = PICO("Pico",verticalAlignment=VerticalAlignment.TOP, horizontalAlignment=HorizontalAlignment.LEFT,xMargin=0, yMargin=0)
+    button = MediumButton("mediumbutton")
+    #holder = Device("blank", "blank", PixelRing.boardHeight, PixelRing.boardWidth,grid=[[proc]])
+    holder = Device("blank", "blank", 10, 10,grid=[[proc]])
+
+    lid1 = PIRSensorLidHole("PIRSensorLidHole")
+    lid2 = PixelRingLightPipeLid("PixelRingLid",grid=[[button]])
+    case = Case(wall_thickness=3,base_side_height=20,base_thickness=3.0,lid_side_height=5)
+    case.makeParts([[holder]],[[lid2]])
+    holeHeight=14.0
+    holePos = Base.Vector((case.width-holeHeight)/2.0,-case.wall_thickness,-3.0)
+    hole = Part.makeBox(holeHeight,6,9,holePos)
+    case.baseDesign = case.baseDesign.cut(hole)
+    case.show()
+
+def PICOPixelRingSensorMusicBox():
+    print("Making PIR Sensor Box")
+    proc = PICO("Pico",verticalAlignment=VerticalAlignment.TOP, horizontalAlignment=HorizontalAlignment.LEFT,xMargin=0, yMargin=2)
+    pipes =  PixelRingLightPipeLid("PixelRingLid")
+    holder = Device("blank", "blank", 10, 10,grid=[[proc]])
+    lid =ButtonRingLid("Buttons",grid=[[pipes]])
+    case = Case(wall_thickness=3.0,base_side_height=32.0,base_thickness=3.0,lid_side_height=5,shape=CaseShapeType.ROUND)
+    case.makeParts([[holder]],[[lid]])
+    holeHeight=14.0
+    holePos = Base.Vector((case.width-holeHeight)/2.0,-case.wall_thickness,-3.0)
+    hole = Part.makeBox(holeHeight,case.wall_thickness+2,11,holePos)
+    case.baseDesign = case.baseDesign.cut(hole)
+    case.show()
+
+def PICOCrackersController():
+    print("Making Crackers Controller")
+    proc = PICO("Pico",verticalAlignment=VerticalAlignment.TOP, horizontalAlignment=HorizontalAlignment.LEFT,xMargin=0, yMargin=2)
+    pir1 = RotaryPot("testPot")
+    pipe1 =  PixelRingLightPipeLid("PixelRingLid1",grid=[[pir1]])
+    pir2 = RotaryPot("testPot")
+    pipe2 =  PixelRingLightPipeLid("PixelRingLid2",grid=[[pir2]])
+    pir3 = RotaryPot("testPot")
+    pipe3 =  PixelRingLightPipeLid("PixelRingLid3",grid=[[pir3]])
+    pir4 = RotaryPot("testPot")
+    pipe4 =  PixelRingLightPipeLid("PixelRingLid4",grid=[[pir4]])
+    holder = Device("blank", "blank", 10, 10,grid=[[proc]])
+    top = Device("blank", "blank", 1, 1,grid=[[pipe1,pipe2],[pipe3,pipe4]])
+#    lid =ButtonRingLid("Buttons",grid=[[pipes]])
+    case = Case(wall_thickness=3.0,base_side_height=32.0,base_thickness=3.0,lid_side_height=5)
+    case.makeParts([[holder]],[[top]])
+    holeHeight=14.0
+    holePos = Base.Vector((case.width-holeHeight)/2.0,-case.wall_thickness,-3.0)
+    hole = Part.makeBox(holeHeight,case.wall_thickness+2,11,holePos)
+    case.baseDesign = case.baseDesign.cut(hole)
+    case.show()
+
+def PICOMonsterController():
+    print("Making Crackers Controller")
+    proc = PICO("Pico",verticalAlignment=VerticalAlignment.TOP, horizontalAlignment=HorizontalAlignment.LEFT,xMargin=0, yMargin=2)
+    pir1 = RotaryPot("testPot")
+    pipe1 =  PixelRingLightPipeLid("PixelRingLid1",grid=[[pir1]])
+    pir2 = RotaryPot("testPot")
+    pipe2 =  PixelRingLightPipeLid("PixelRingLid2",grid=[[pir2]])
+    pir3 = RotaryPot("testPot")
+    pipe3 =  PixelRingLightPipeLid("PixelRingLid3",grid=[[pir3]])
+    pir4 = RotaryPot("testPot")
+    pipe4 =  PixelRingLightPipeLid("PixelRingLid4",grid=[[pir4]])
+    holder = Device("blank", "blank", 10, 10,grid=[[proc]])
+    pipes =  PixelRingLightPipeLid("PixelRingLid")
+    holder = Device("blank", "blank", 10, 10,grid=[[proc]])
+    lid =ButtonRingLid("Buttons",grid=[[pipes]])
+    lidholder = Device("blank", "blank", 10, 10,grid=[[lid]],horizontalAlignment=HorizontalAlignment.CENTRE)
+    top = Device("blank", "blank", 1, 1,grid=[[pipe1,pipe2],[pipe3,pipe4],[lidholder]])
+    case = Case(wall_thickness=3.0,base_side_height=32.0,base_thickness=3.0,lid_side_height=5)
+    case.makeParts([[holder]],[[top]])
+    holeHeight=14.0
+    holePos = Base.Vector((case.width-holeHeight)/2.0,-case.wall_thickness,-3.0)
+    hole = Part.makeBox(holeHeight,case.wall_thickness+2,11,holePos)
+    case.baseDesign = case.baseDesign.cut(hole)
+    case.show()
+
+def fullController():
+    pico1 = PICO("Pico1")
+    pico2 = PICO("Pico2")
+    pi1 = PI4Landscape("Pi4",horizontalAlignment=HorizontalAlignment.LEFT)
+    procHolder = Device("Proc holder", "proc holder", 10, 10,grid=[[pico1,pico2]],horizontalAlignment=HorizontalAlignment.RIGHT)
+#
+    pot1 = RotaryPot("pot1")
+    pipes1 =  PixelRingLightPipeLid("PixelRingLid1",grid=[[pot1]], xMargin=0, yMargin=0)
+#
+    pot2 = RotaryPot("pot2")
+    pipes2 =  PixelRingLightPipeLid("PixelRingLid2",grid=[[pot2]], xMargin=0, yMargin=0)
+#
+    holder1 = Device("holder1", "holder1", 10, 10,grid=[[pipes1,pipes2]], xMargin=0, yMargin=0)
+#
+    pot3 = RotaryPot("pot3")
+    pipes3 =  PixelRingLightPipeLid("PixelRingLid3",grid=[[pot3]], xMargin=0, yMargin=0)
+#
+    pot4 = RotaryPot("pot4")
+    pipes4 =  PixelRingLightPipeLid("PixelRingLid4",grid=[[pot4]], xMargin=0, yMargin=0)
+#
+    holder2 = Device("holder2", "holder2", 10, 10,grid=[[pipes1,pipes2],[pipes3,pipes4]], xMargin=30, yMargin=30)
+#
+    pot = RotaryPot("pot")
+    pipes =  PixelRingLightPipeLid("PixelRingLid")
+    lid =ButtonRingLid("Buttons",grid=[[pipes]],scrunchY=10)
+    base_side_height=32.0
+    case = Case(wall_thickness=3.0,base_side_height=base_side_height,base_thickness=3.0,lid_side_height=5,shape=CaseShapeType.MUSICBOX)
+    case.makeParts(  [[pi1],[procHolder]],[[holder2],[lid]])
+    holeHeight=14.0
+    holePos = Base.Vector((case.width-holeHeight)/2.0,-case.wall_thickness,-3.0)
+    hole = Part.makeBox(holeHeight,case.wall_thickness+2,11,holePos)
+    cableHolePos = Base.Vector(case.width/2.0,-case.wall_thickness,base_side_height/2.0-6)
+    hole = Part.makeCylinder(4.15,case.wall_thickness,cableHolePos, Base.Vector(0,1,0))
+    case.baseDesign = case.baseDesign.cut(hole)
+    cableHolePos = Base.Vector(case.width/2.0,-case.wall_thickness,base_side_height/2.0+6)
+    hole = Part.makeCylinder(3.1,case.wall_thickness,cableHolePos, Base.Vector(0,1,0))
+    case.baseDesign = case.baseDesign.cut(hole)
+    case.show()
+
+def tinyTestMIDI():
+    proc = PICO("Pico",verticalAlignment=VerticalAlignment.TOP, horizontalAlignment=HorizontalAlignment.LEFT,xMargin=0, yMargin=2)
+    pico2 = PICO("Pico2")
+    holder = Device("blank", "blank", 10, 10,grid=[[proc]])
+#
+    pot1 = RotaryPot("pot1")
+    pipes1 =  PixelRingLightPipeLid("PixelRingLid1",grid=[[pot1]], xMargin=0, yMargin=0)
+#
+    pot2 = RotaryPot("pot2")
+    pipes2 =  PixelRingLightPipeLid("PixelRingLid2",grid=[[pot2]], xMargin=0, yMargin=0)
+#
+    holder1 = Device("holder1", "holder1", 10, 10,grid=[[pipes1,pipes2]])
+#
+    pot3 = RotaryPot("pot3")
+    pipes3 =  PixelRingLightPipeLid("PixelRingLid3",grid=[[pot3]], xMargin=0, yMargin=0)
+#
+    pot4 = RotaryPot("pot4")
+    pipes4 =  PixelRingLightPipeLid("PixelRingLid4",grid=[[pot4]])
+#
+    holder2 = Device("holder2", "holder2", 10, 10,grid=[[pipes3,pipes4]], xMargin=4, yMargin=4)
+#
+    pot = RotaryPot("pot")
+    pipes =  PixelRingLightPipeLid("PixelRingLid")
+    lid =ButtonRingLid("Buttons",grid=[[pipes]])
+    base_side_height=32.0
+    case = Case(wall_thickness=3.0,base_side_height=base_side_height,base_thickness=3.0,lid_side_height=5,shape=CaseShapeType.MUSICBOX)
+    case.makeParts(      [[holder],[pico2]],[[holder1],[holder2]])
+    holeHeight=14.0
+    holePos = Base.Vector((case.width-holeHeight)/2.0,-case.wall_thickness,-3.0)
+    hole = Part.makeBox(holeHeight,case.wall_thickness+2,11,holePos)
+    case.baseDesign = case.baseDesign.cut(hole)
+    case.show()
+
+def Pomorodo():
+    proc = PICO("Pico",verticalAlignment=VerticalAlignment.TOP, horizontalAlignment=HorizontalAlignment.LEFT,xMargin=0, yMargin=2)
+    procHolder = Device("blank", "blank", 5, 5,grid=[[proc]])
+    redButton =  MediumButton("red")
+    yellowButton =  MediumButton("yellow")
+    greenButton =  MediumButton("green")
+    leftSpeaker = SmallSpeaker("left speaker")
+    led = Alpha14Seg("Alpha14Seg")
+    rightSpeaker = SmallSpeaker("right speaker")
+    speakerHolder = Device("blank", "blank", 5, 5,grid=[[leftSpeaker,led,rightSpeaker]])
+    buttonHolder = Device("blank", "blank", 5, 5,grid=[[redButton,yellowButton,greenButton]])
+    base_side_height=35.0
+    case = Case(wall_thickness=3.0,base_side_height=base_side_height,base_thickness=3.0,lid_side_height=5,shape=CaseShapeType.MUSICBOX)
+    case.makeParts(      [[procHolder]],[[buttonHolder],[speakerHolder]])
+    holeHeight=14.0
+    holePos = Base.Vector((case.width-holeHeight)/2.0,-case.wall_thickness,-3.0)
+    hole = Part.makeBox(holeHeight,case.wall_thickness+2,11,holePos)
+    case.baseDesign = case.baseDesign.cut(hole)
+    case.show()
+
+def TalkingPomorodo():
+    proc = PICO("Pico",verticalAlignment=VerticalAlignment.TOP, horizontalAlignment=HorizontalAlignment.LEFT,xMargin=0, yMargin=2)
+    procHolder = Device("blank", "blank", 5, 5,grid=[[proc]])
+    button =  MediumButton("button")
+    pot = RotaryPot("pot",xMargin=5)
+    speaker = SmallSpeaker("speaker")
+    led = Alpha14Seg("Alpha14Seg",xMargin=5,yMargin=2)
+    speakerHolder = Device("blank", "blank", 5, 5,grid=[[speaker,button]])
+    space = Device("blank", "blank", 1, 5,xMargin=0)
+    buttonHolder = Device("blank", "blank", 5, 5,grid=[[led,space,pot]])
+    base_side_height=32.0
+    case = Case(wall_thickness=3.0,base_side_height=base_side_height,base_thickness=3.0,lid_side_height=5,shape=CaseShapeType.MUSICBOX)
+    case.makeParts(      [[procHolder]],[[buttonHolder],[speakerHolder]])
+    holeHeight=14.0
+    holePos = Base.Vector((case.width-holeHeight)/2.0,-case.wall_thickness,-3.0)
+    hole = Part.makeBox(holeHeight,case.wall_thickness+2,11,holePos)
+    case.baseDesign = case.baseDesign.cut(hole)
+    case.show()
+
+
+class KeySwitchHole (PillarSupportedDevice):
+
+    boardHeight = 21.0
+    boardWidth = 21.0
+    slotHeight=14.5
+    slotWidth=14.5
+
+
+    def __init__(self, partName, 
+                orientation=Orientation.PORTRAIT,
+                xMargin=0.5, yMargin=0.5, 
+                pillarType=PillarType.DEFAULT,scrunchX=0,scrunchY=0,
+                verticalAlignment=VerticalAlignment.CENTRE, horizontalAlignment=HorizontalAlignment.CENTRE,
+                slotYOffset=0):
+
+        super(KeySwitchHole,self).__init__("KeySwitchHole",partName, self.boardWidth,self.boardHeight,
+                                            verticalAlignment=verticalAlignment, horizontalAlignment=horizontalAlignment,
+                                            xMargin=xMargin,yMargin=yMargin,
+                                            pillarType=pillarType,scrunchX=scrunchX,scrunchY=scrunchY,
+                                            pillarRadius=2.5,pillarHeight=4,holeRadius=0.6,
+                                            holeCounterSinkDepth=1.0,holeCounterSinkRadius=3.0 )
+        self.height = self.height+slotYOffset
+        self.slotYOffset = slotYOffset
+
+    def placeComponent(self,x,y,tray,baseDepth):
+        tray = super(KeySwitchHole,self).placeComponent(x,y,tray,baseDepth)
+        bottomX=x+self.xMargin 
+        bottomY=y+self.yMargin 
+        dummyPos = Base.Vector(bottomX, bottomY+self.slotYOffset, 0)
+        dummy = Part.makeBox(KeySwitchHole.boardWidth,KeySwitchHole.boardWidth, 3,dummyPos)
+#        tray = tray.fuse(dummy)
+        slotX=bottomX+((KeySwitchHole.boardWidth-KeySwitchHole.slotWidth)/2.0)
+        slotY=bottomY+((KeySwitchHole.boardHeight-KeySwitchHole.slotHeight)/2.0)+self.slotYOffset
+        slotPos = Base.Vector(slotX, slotY, -baseDepth)
+        slot = Part.makeBox(KeySwitchHole.slotWidth,KeySwitchHole.slotHeight, baseDepth+self.pillarHeight,slotPos)
+        tray = tray.cut(slot)
+        return tray
+
+
+def ChordKeyboard():
+    proc = PICO("Pico",verticalAlignment=VerticalAlignment.TOP, horizontalAlignment=HorizontalAlignment.LEFT,xMargin=0, yMargin=2)
+    procIndent = Device("blank", "blank", 100, 10,xMargin=0)    
+    procHolder = Device("blank", "blank", 20, 5,grid=[[procIndent,proc]])
+    led = Alpha14Seg("Alpha14Seg",xMargin=5,yMargin=2)
+    indent = Device("blank", "blank", 50, 10,xMargin=0)    
+    pinkySpace = Device("blank", "blank", 1, 10,xMargin=0)    
+# adjust these offsets to move the keys up and down
+    sw1=KeySwitchHole("Keyswitch1",xMargin=5,yMargin=10,slotYOffset=0)
+    sw2=KeySwitchHole("Keyswitch2",xMargin=1,yMargin=2,slotYOffset=18)
+    sw3=KeySwitchHole("Keyswitch3",xMargin=1,yMargin=2,slotYOffset=30)
+    sw4=KeySwitchHole("Keyswitch4",xMargin=1,yMargin=2,slotYOffset=15)
+    sw5=KeySwitchHole("Keyswitch5",xMargin=1,yMargin=2,slotYOffset=0)
+    sw6=KeySwitchHole("Keyswitch6",xMargin=5,yMargin=5,slotYOffset=0)
+    space = Device("blank", "blank", 10, 5,xMargin=0) 
+    topHolder = Device("topHolder", "topHolder", 1, 1,grid=[[sw1,sw2,sw3,sw4,indent]],horizontalAlignment=HorizontalAlignment.RIGHT)
+    keyHolder = Device("keyholder", "keyholder", 1, 1,grid=[[sw5,sw6]],horizontalAlignment=HorizontalAlignment.RIGHT)
+    base_side_height=15.50
+    case = Case(wall_thickness=3.0,base_side_height=base_side_height,base_thickness=3.0, lid_thickness=3.0,lid_side_height=5,shape=CaseShapeType.MUSICBOX)
+    case.makeParts([[procHolder]],[[keyHolder],[space],[topHolder],[led]])
+    holeHeight=14.0
+    holePos = Base.Vector((case.width-holeHeight)/2.0+50,-case.wall_thickness,-3.0)
+    hole = Part.makeBox(holeHeight,case.wall_thickness+2,11,holePos)
+    case.baseDesign = case.baseDesign.cut(hole)
+    case.show()
+
+
+ChordKeyboard()
