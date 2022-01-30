@@ -1,6 +1,11 @@
 # PICO-Chord-keyboard
 ![Image of keyboard](images/keyboard.jpg)
 Designs and software for a chord keyboard controller described Hackspace magazine.
+## Video
+[![YouTube Screenshot](images/video.jpg)](https://youtu.be/ZogL7Nv60Xc)
+
+To find out more about the device click on the image above to see a short video.
+
 ## Using the keyboard
 The keyboard is implemented as a USB HID and can be used anywhere you would connect a USB keyboard. Characters are entered by pressing and releasing "chords". A full document and a keyboard map are available in the doc folder.
 ## Hardware
