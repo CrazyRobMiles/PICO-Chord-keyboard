@@ -1,6 +1,6 @@
 # PICO-Chord-keyboard
 ![Image of keyboard](images/keyboard.jpg)
-Designs and software for a chord keyboard controller described Hackspace magazine.
+Designs and software for a chord keyboard controller.
 ## Video
 [![YouTube Screenshot](images/video.jpg)](https://youtu.be/ZogL7Nv60Xc)
 
@@ -8,6 +8,10 @@ To find out more about the device click on the image above to see a short video.
 
 ## Using the keyboard
 The keyboard is implemented as a USB HID and can be used anywhere you would connect a USB keyboard. Characters are entered by pressing and releasing "chords". A full document and a keyboard map are available in the doc folder.
+## History
+The keyboard is based on the Cykey chord design by Cy Enfield which was used as the basis of the Microwriter and Microwrite AgendA devices developed by him and Chris Rainey. You can find out more about these devices [here](http://www.computinghistory.org.uk/det/5794/Microwriter-MW4/), [here](https://www.microsoft.com/buxtoncollection/detail.aspx?id=5) and [here](https://mindmachine.co.uk/book/A/Inp-Outp/Microwriter01.html). 
+
+If you want to buy an official Microwriter keyboard you can get one [here](https://sites.google.com/site/cykeybellaire/home). 
 ## Hardware
 ![Image of circuit](images/circuit.png)
 
