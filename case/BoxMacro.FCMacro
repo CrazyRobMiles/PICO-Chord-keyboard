@@ -3132,8 +3132,8 @@ def TalkingPomorodo():
 
 class KeySwitchHole (PillarSupportedDevice):
 
-    boardHeight = 21.0
-    boardWidth = 21.0
+    boardHeight = 15.0
+    boardWidth = 15.0
     slotHeight=14.5
     slotWidth=14.5
 
