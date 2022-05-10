@@ -12,7 +12,9 @@ from adafruit_hid.keyboard_layout_uk import KeyboardLayoutUK
 from adafruit_hid.keycode import Keycode
 from adafruit_ht16k33 import segments
 
-version = "1.0"
+version = "1.1"
+# Make this false for a left-handed keyboard
+RIGHT_HANDED = True
 
 class Col:
     
@@ -339,6 +341,13 @@ class PicoChord:
             key.set_col(col)
         self.pixels.show()
 
+    def get_key_bits(self):
+        if RIGHT_HANDED:
+            bits = (1,2,4,8,16,32)
+        else:
+            bits = (32,16,8,4,2,1)
+        return bits
+
     def display_guide(self, ch): 
         char_def = self.lookup_character(ch)
         ch = char_def[0]
@@ -346,7 +355,7 @@ class PicoChord:
         char_state = char_def[2]
         up_col = self.keyboard_state_cols[char_state]
         pos = 0
-        for bit in (1,2,4,8,16,32):
+        for bit in self.get_key_bits():
             key = self.keys[pos]
             key.up_col = up_col
             if (char_bits & bit) == 0:
@@ -361,7 +370,7 @@ class PicoChord:
         char_state = char_def[2]
         up_col = self.keyboard_state_cols[char_state]
         pos = 0
-        for bit in (1,2,4,8,16,32):
+        for bit in self.get_key_bits():
             key = self.keys[pos]
             key.up_col = up_col
             if (char_bits & bit) == 0:
@@ -393,17 +402,30 @@ class PicoChord:
         print("Printing:",symbol,bits)
         self.send_animated_text_to_keyboard(symbol)
         
-        top_line = "        "
-        bottom_line = ""
-        for bit in (1,2,4,8,16,32):
-            if (bits & bit) == 0:
-                text="[ ] "
-            else:
-                text="[X] "
-            if bit < 4:
-                bottom_line = bottom_line + text
-            else:
-                top_line = top_line + text
+        if RIGHT_HANDED:
+            top_line = "        "
+            bottom_line = ""
+            for bit in (1,2,4,8,16,32):
+                if (bits & bit) == 0:
+                    text="[ ] "
+                else:
+                    text="[X] "
+                if bit < 4:
+                    bottom_line = bottom_line + text
+                else:
+                    top_line = top_line + text
+        else:
+            top_line = ""
+            bottom_line = "                "
+            for bit in (32,16,8,4,2,1):
+                if (bits & bit) == 0:
+                    text="[ ] "
+                else:
+                    text="[X] "
+                if bit < 4:
+                    bottom_line = bottom_line + text
+                else:
+                    top_line = top_line + text
         self.send_animated_text_to_keyboard(top_line)
         self.send_animated_text_to_keyboard(bottom_line)
         self.send_animated_text_to_keyboard("-----------------------")
@@ -645,15 +667,26 @@ class PicoChord:
         while True:
             self.update()
 
+if RIGHT_HANDED:
+    key_switches=[
+        Switch(pin=board.GP15,pixel=0,bit=1),  # control
+        Switch(pin=board.GP14,pixel=1,bit=2),  # thumb
+        Switch(pin=board.GP13,pixel=2,bit=4),  # index
+        Switch(pin=board.GP12,pixel=3,bit=8),  # middle
+        Switch(pin=board.GP11,pixel=4,bit=16), # ring
+        Switch(pin=board.GP10,pixel=5,bit=32)  # little
+        ]
+else:
+    key_switches=[
+        Switch(pin=board.GP15,pixel=0,bit=32),  # control
+        Switch(pin=board.GP14,pixel=1,bit=16),  # thumb
+        Switch(pin=board.GP13,pixel=2,bit=8),  # index
+        Switch(pin=board.GP12,pixel=3,bit=4),  # middle
+        Switch(pin=board.GP11,pixel=4,bit=2), # ring
+        Switch(pin=board.GP10,pixel=5,bit=1)  # little
+        ]
 keyboard = PicoChord(i2c_sda=board.GP0, i2c_scl=board.GP1,
             pixel_pin=board.GP17,
-            key_switches=[
-                Switch(pin=board.GP15,pixel=0,bit=1),  # control
-                Switch(pin=board.GP14,pixel=1,bit=2),  # thumb
-                Switch(pin=board.GP13,pixel=2,bit=4),  # index
-                Switch(pin=board.GP12,pixel=3,bit=8),  # middle
-                Switch(pin=board.GP11,pixel=4,bit=16), # ring
-                Switch(pin=board.GP10,pixel=5,bit=32)  # little
-                ])
+            key_switches=key_switches)
 keyboard.run()
 

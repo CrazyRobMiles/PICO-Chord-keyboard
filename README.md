@@ -1,6 +1,6 @@
 # PICO-Chord-keyboard
 ![Image of keyboard](images/keyboard.jpg)
-Designs and software for a chord keyboard controller.
+Designs and software for a chord keyboard controller. Created as the basis of an article for Hackspace magazine, issue 53. You can download the magazine [here](https://hackspace.raspberrypi.com/issues/53/pdf/download). The article is on page 68.
 ## Video
 [![YouTube Screenshot](images/video.jpg)](https://youtu.be/ZogL7Nv60Xc)
 
@@ -29,6 +29,14 @@ You will need the following hardware items:
 * Screws. You'll need some screws sized M2 4mm in length to fix things to the case (search for "laptop screws")
 ## Program installation
 You must install Python 7 on your PICO device. Then copy the contents of the lib folder in this repository into the lib folder on your PICO. Finally copy the code.py file into root folder of your PICO.
+## Left handed keyboard
+The code now supports left handed operation. The connections are exactly the same. There is a new case top design for left handed use. 
+```
+version = "1.1"
+# Make this false for a left-handed keyboard
+RIGHT_HANDED = False
+```
+You make the above change to the code.py file (starting at line 17) to make the keyboard work in left handed mode. 
 ## Program development
 You can use the Pymaker plugin for Visual Studio Code to develop this software. To save and run the program, copy the code.py file from this repository onto the root folder of your PICO. This should cause the program to restart.
 ## Case designs
