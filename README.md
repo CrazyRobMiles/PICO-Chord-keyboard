@@ -29,6 +29,8 @@ You will need the following hardware items:
 * Screws. You'll need some screws sized M2 4mm in length to fix things to the case (search for "laptop screws")
 ## Program installation
 You must install Python 7 on your PICO device. Then copy the contents of the lib folder in this repository into the lib folder on your PICO. Finally copy the code.py file into root folder of your PICO.
+
+If you want to try Python 9 on your PICO you can copy the contents of the v9lib folder.
 ## Left handed keyboard
 The code now supports left handed operation. The connections are exactly the same. There is a new case top design for left handed use. 
 ```
